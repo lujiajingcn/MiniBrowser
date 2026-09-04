@@ -422,6 +422,10 @@ function showPageContextMenu(x, y) {
   item('关闭窗口', () => {
     if (window.electronAPI && window.electronAPI.windowControl) window.electronAPI.windowControl('close');
   });
+  item('隐藏窗口', () => {
+    // 隐藏后进程与下载继续运行；要重新显示，需在 cmd 中运行 show.js 连接本地服务
+    if (window.electronAPI && window.electronAPI.hideWindow) window.electronAPI.hideWindow();
+  });
 
   const maxX = Math.max(0, window.innerWidth - 180);
   const maxY = Math.max(0, window.innerHeight - 240);

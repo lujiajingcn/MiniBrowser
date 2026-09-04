@@ -55,5 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 请求主进程打开一个独立的新窗口
   createWindow: (url) => ipcRenderer.send('mb-create-window', url),
   // 无边框窗口控制：action = 'min' | 'max' | 'close'
-  windowControl: (action) => ipcRenderer.send('mb-win-control', action)
+  windowControl: (action) => ipcRenderer.send('mb-win-control', action),
+  // 隐藏当前窗口（进程与下载继续；重新显示需在 cmd 中运行 show.js 连接本地服务）
+  hideWindow: () => ipcRenderer.send('mb-hide-window')
 });

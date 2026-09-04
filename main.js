@@ -3,6 +3,7 @@
 const { app, BrowserWindow, webContents, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const net = require('node:net');
 const { setupDownloads } = require('./downloads');
 const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
@@ -137,6 +138,53 @@ async function runDemoSequence(win, captureOut) {
   }
 }
 
+// 本地“显示”服务：仅在 127.0.0.1 监听，接收来自 show.js（cmd 命令行）的 show 指令后，
+// 把当前所有已隐藏的窗口重新显示出来。端口固定，作为“指定的命令行”所对应的端点。
+const SHOW_PORT = 39321;
+const SHOW_HOST = '127.0.0.1';
+let _showServerStarted = false;
+
+function setupShowServer() {
+  if (_showServerStarted) return;
+  _showServerStarted = true;
+  const server = net.createServer((socket) => {
+    let buf = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk) => {
+      buf += chunk;
+      if (buf.length > 64) {
+        socket.end();
+        return;
+      }
+      const cmd = buf.trim();
+      if (cmd === 'show') {
+        // 把所有窗口显示出来：取消任务栏跳过 + 显示 + 置顶聚焦
+        BrowserWindow.getAllWindows().forEach((w) => {
+          try {
+            w.setSkipTaskbar(false);
+            if (!w.isVisible()) w.show();
+            w.focus();
+          } catch (_) {
+            /* ignore */
+          }
+        });
+        socket.write('ok\n');
+      } else {
+        socket.write('err\n');
+      }
+      socket.end();
+    });
+    socket.on('error', () => socket.destroy());
+  });
+  server.on('error', (e) => {
+    // 端口被占用（例如多个实例）/ 权限不足：打印告警但不阻断主流程
+    console.error('[show-server] 启动失败：', e && e.message ? e.message : e);
+  });
+  server.listen(SHOW_PORT, SHOW_HOST, () => {
+    console.log('[show-server] 已启动，监听 ' + SHOW_HOST + ':' + SHOW_PORT + '（用时运行 show.js 恢复窗口）');
+  });
+}
+
 app.whenReady().then(() => {
   setupDownloads();
   setupSettingsIpc();
@@ -171,6 +219,19 @@ app.whenReady().then(() => {
       else win.maximize();
     } else if (action === 'close') win.close();
   });
+
+  // 隐藏窗口：仅从应用内触发（右键菜单「隐藏窗口」）。窗口被隐藏但进程与下载任务继续运行；
+  // 重新显示只能通过在 cmd 中运行 show.js（连接本地服务端口发送 show 命令）实现。
+  ipcMain.on('mb-hide-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      win.setSkipTaskbar(true); // 连任务栏入口也去掉，做到“真正隐藏”
+      win.hide();
+    }
+  });
+
+  // 启动本地“显示”服务：监听固定端口，只处理来自本机的 show 指令，用于 cmd 命令行恢复界面。
+  setupShowServer();
 
   const args = parseLaunchArgs();
   createWindow(!!args.captureOut);
