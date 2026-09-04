@@ -1229,3 +1229,10 @@ body {
 .bm-actions button:hover {
   background: var(--hover-bg);
 }
+
+/* ---------- 无框模式：隐藏工具栏 / 收藏夹栏 / 标签栏，仅留网页内容 ---------- */
+body.frameless .toolbar,
+body.frameless #bookmarks-bar,
+body.frameless .tab-bar {
+  display: none;
+}

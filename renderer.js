@@ -297,10 +297,95 @@ function showContextMenu(x, y, linkUrl) {
   contextMenu.classList.remove('hidden');
 }
 
+// ---------- 无框模式（隐藏工具栏/收藏夹/标签栏，仅留网页内容）----------
+// 通过右键菜单「进入/退出无框模式」切换；状态持久化，重启后保持。
+function applyFrameless(on) {
+  document.body.classList.toggle('frameless', !!on);
+  try {
+    localStorage.setItem('mb_frameless', on ? '1' : '0');
+  } catch (_) {
+    /* 隐私模式等 localStorage 不可用时忽略 */
+  }
+}
+
+function toggleFrameless() {
+  applyFrameless(!document.body.classList.contains('frameless'));
+}
+
+// 通用右键菜单：页面空白/选中文字、或外壳工具栏右键时弹出，
+// 提供无框模式开关与常用导航项（刷新/后退/前进/开发者工具）。
+function showPageContextMenu(x, y) {
+  contextMenuList.innerHTML = '';
+
+  function item(label, action) {
+    const li = document.createElement('li');
+    li.textContent = label;
+    li.addEventListener('click', () => {
+      try {
+        action();
+      } catch (_) {
+        /* ignore */
+      }
+      hideContextMenu();
+    });
+    contextMenuList.appendChild(li);
+  }
+
+  function divider() {
+    const li = document.createElement('li');
+    li.className = 'divider';
+    contextMenuList.appendChild(li);
+  }
+
+  const on = document.body.classList.contains('frameless');
+  item(on ? '退出无框模式' : '进入无框模式', toggleFrameless);
+  divider();
+  item('刷新', () => {
+    const t = activeTab();
+    if (t) {
+      if (t.loading) t.webview.stop();
+      else t.webview.reload();
+    }
+  });
+  item('后退', () => {
+    const wv = activeWebview();
+    if (wv) wv.goBack();
+  });
+  item('前进', () => {
+    const wv = activeWebview();
+    if (wv) wv.goForward();
+  });
+  divider();
+  item('开发者工具', () => {
+    const wv = activeWebview();
+    if (wv) wv.openDevTools();
+  });
+
+  const maxX = Math.max(0, window.innerWidth - 180);
+  const maxY = Math.max(0, window.innerHeight - 160);
+  contextMenu.style.left = Math.min(x, maxX) + 'px';
+  contextMenu.style.top = Math.min(y, maxY) + 'px';
+  contextMenu.classList.remove('hidden');
+}
+
 document.addEventListener('click', (e) => {
   if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target)) {
     hideContextMenu();
   }
+});
+
+// 外壳区域（工具栏 / 收藏夹 / 标签栏 / 面板）右键也弹出无框模式菜单；
+// 输入框、可编辑区域、右键菜单自身则保留系统默认行为。
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target;
+  if (!t) return;
+  if (contextMenu.contains(t)) {
+    e.preventDefault(); // 菜单本身上右键：抑制系统菜单，保留我们的菜单
+    return;
+  }
+  if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return;
+  e.preventDefault();
+  showPageContextMenu(e.clientX, e.clientY);
 });
 
 function wireWebview(tab) {
@@ -385,11 +470,11 @@ function wireWebview(tab) {
     if (e.channel === 'mb-context-menu') {
       const payload = e.args && e.args[0] ? e.args[0] : {};
       const link = payload.link;
-      if (!link || !link.url) return;
       const rect = wv.getBoundingClientRect();
       const x = rect.left + (payload.x || 0);
       const y = rect.top + (payload.y || 0);
-      showContextMenu(x, y, link.url);
+      if (link && link.url) showContextMenu(x, y, link.url);
+      else showPageContextMenu(x, y); // 页面空白/选中文字：通用菜单（含无框模式开关）
       return;
     }
     if (e.channel === 'mb-videos-updated') {
@@ -1854,6 +1939,13 @@ zoomBtn.addEventListener('click', resetZoom);
 applyTheme(); // index.html 的引导脚本已抢先套用一次，这里补齐下拉框等 UI 状态
 renderBookmarks();
 
+// 恢复上次的无框模式状态（隐藏工具栏/收藏夹/标签栏，仅留网页内容）
+try {
+  if (localStorage.getItem('mb_frameless') === '1') applyFrameless(true);
+} catch (_) {
+  /* 隐私模式下 localStorage 不可用时忽略 */
+}
+
 // 主进程拦截到的弹窗（页面 window.open() / target="_blank"）→ 在新标签打开
 // 补齐 webview-preload 在 contextIsolation 下无法拦截 window.open 的缺口
 if (window.electronAPI && window.electronAPI.onOpenInTab) {
@@ -1904,5 +1996,12 @@ document.addEventListener('keydown', (e) => {
   } else if (!e.shiftKey && e.key === '0') {
     e.preventDefault();
     resetZoom(); // Ctrl/Cmd + 0：重置
+  }
+});
+
+// Esc：仅在无框模式下退出（普通浏览的 Esc 仍用于关闭查找条等，不受影响）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('frameless')) {
+    applyFrameless(false);
   }
 });
