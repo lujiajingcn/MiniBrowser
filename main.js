@@ -22,7 +22,11 @@ function createWindow(offscreen) {
     minWidth: 640,
     minHeight: 480,
     show: !offscreen,
-    backgroundColor: '#1f2933',
+    // transparent:true 让窗口本身支持透明合成（透明模式下桌面可透出）。
+    // 注意：开启 transparent 时必须把 backgroundColor 设为透明色，否则整窗仍不透明。
+    // 普通模式下各部件（工具栏/网页）自带不透明背景，外观不变，仅“透明模式”才会真正透出桌面。
+    transparent: true,
+    backgroundColor: '#00000000',
     frame: false, // 无边框：去掉系统原生标题栏，无框模式下网页可铺满整窗
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -185,7 +189,8 @@ ipcMain.on('mb-create-window', (event, url) => {
   const w = new BrowserWindow({
     width: 1280,
     height: 820,
-    backgroundColor: '#1f2933',
+    transparent: true, // 与主窗口保持一致：支持透明模式
+    backgroundColor: '#00000000',
     frame: false, // 与主窗口保持一致：无边框
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

@@ -312,6 +312,59 @@ function toggleFrameless() {
   applyFrameless(!document.body.classList.contains('frameless'));
 }
 
+// ---------- 透明模式（窗口与页面背景透明，透出桌面）----------
+// 依赖主进程将 BrowserWindow 设为 transparent:true。普通模式下各部件自带不透明背景，外观不变；
+// 仅当 body 带上 .transparent 类时，外壳与网页背景变为透明。
+// 网页背景透明通过向每个 <webview> 注入 CSS 实现（html,body 背景透明）。
+const TRANSPARENT_PAGE_CSS =
+  'html, body { background-color: transparent !important; background-image: none !important; }';
+const _transparentCssKeys = new WeakMap(); // webview -> insertCSS 返回的 key
+
+function isTransparent() {
+  return document.body.classList.contains('transparent');
+}
+
+// 对单个 webview 注入/移除透明 CSS。insertCSS 注入的样式在页面导航后依然生效，
+// 故用 WeakMap 记录 key，已注入则跳过，避免重复叠加。
+function applyPageTransparent(webview, on) {
+  if (!webview || typeof webview.insertCSS !== 'function') return;
+  if (on) {
+    if (_transparentCssKeys.has(webview)) return;
+    try {
+      const key = webview.insertCSS(TRANSPARENT_PAGE_CSS);
+      _transparentCssKeys.set(webview, key);
+    } catch (_) {
+      /* 某些页面 CSP 下 insertCSS 可能抛错，忽略 */
+    }
+  } else {
+    const key = _transparentCssKeys.get(webview);
+    if (key != null) {
+      try {
+        webview.removeInsertedCSS(key);
+      } catch (_) {
+        /* ignore */
+      }
+      _transparentCssKeys.delete(webview);
+    }
+  }
+}
+
+function applyTransparent(on) {
+  document.body.classList.toggle('transparent', !!on);
+  try {
+    localStorage.setItem('mb_transparent', on ? '1' : '0');
+  } catch (_) {
+    /* 隐私模式等 localStorage 不可用时忽略 */
+  }
+  tabs.forEach((t) => {
+    if (t.webview) applyPageTransparent(t.webview, !!on);
+  });
+}
+
+function toggleTransparent() {
+  applyTransparent(!isTransparent());
+}
+
 // 通用右键菜单：页面空白/选中文字、或外壳工具栏右键时弹出，
 // 提供无框模式开关与常用导航项（刷新/后退/前进/开发者工具）。
 function showPageContextMenu(x, y) {
@@ -339,6 +392,8 @@ function showPageContextMenu(x, y) {
 
   const on = document.body.classList.contains('frameless');
   item(on ? '退出无框模式' : '进入无框模式', toggleFrameless);
+  const onT = isTransparent();
+  item(onT ? '退出透明模式' : '进入透明模式', toggleTransparent);
   divider();
   item('刷新', () => {
     const t = activeTab();
@@ -506,6 +561,10 @@ function wireWebview(tab) {
       e.preventDefault();
       if (window.electronAPI) window.electronAPI.openExternal(u);
     }
+  });
+  // 透明模式：webview 就绪后按当前透明状态注入/保持页面背景透明 CSS
+  wv.addEventListener('dom-ready', () => {
+    if (isTransparent()) applyPageTransparent(wv, true);
   });
 }
 
@@ -1959,6 +2018,13 @@ renderBookmarks();
 // 恢复上次的无框模式状态（隐藏工具栏/收藏夹/标签栏，仅留网页内容）
 try {
   if (localStorage.getItem('mb_frameless') === '1') applyFrameless(true);
+} catch (_) {
+  /* 隐私模式下 localStorage 不可用时忽略 */
+}
+
+// 恢复上次的透明模式状态（body.transparent 类先置好，之后各 webview 在 dom-ready 时注入透明 CSS）
+try {
+  if (localStorage.getItem('mb_transparent') === '1') applyTransparent(true);
 } catch (_) {
   /* 隐私模式下 localStorage 不可用时忽略 */
 }

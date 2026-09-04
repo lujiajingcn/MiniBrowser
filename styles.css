@@ -1304,3 +1304,22 @@ body.frameless #frameless-drag-strip {
 body.frameless #frameless-drag-strip:hover {
   background: rgba(127, 127, 127, 0.35);
 }
+
+/* ---------- 透明模式：外壳与网页背景透明，透出桌面 ---------- */
+/* 主进程已将窗口设为 transparent:true，普通模式下各部件自带不透明背景、外观不变；
+   仅当 body 带上 .transparent 类时，下列外壳背景与网页容器背景变为透明，
+   页面本身的背景透明由 renderer.js 向 <webview> 注入 CSS 实现。 */
+body.transparent {
+  background: transparent;
+}
+body.transparent .toolbar,
+body.transparent #bookmarks-bar,
+body.transparent .tab-bar,
+body.transparent .webview-container {
+  background: transparent;
+}
+/* 透明外壳下给工具栏/标签栏描一条细边，悬浮在桌面时仍保留边界感，不至于“消失” */
+body.transparent .toolbar,
+body.transparent .tab-bar {
+  box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.3);
+}
