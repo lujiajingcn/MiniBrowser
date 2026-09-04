@@ -25,6 +25,8 @@
   </script>
 </head>
 <body>
+  <!-- 无框模式下，工具栏被隐藏，此处用一条细的拖拽热区替代：在窗口正上方边缘按住左键可拖动窗口 -->
+  <div id="frameless-drag-strip" aria-hidden="true"></div>
   <header class="toolbar">
     <div class="nav-buttons">
       <button id="back" title="后退" aria-label="后退">◀</button>
@@ -52,6 +54,12 @@
       <button id="save-page" title="保存页面（离线查看）" aria-label="保存页面">💾</button>
       <button id="zoom" class="zoom-btn" title="缩放级别，点击重置 (Ctrl+0)" aria-label="缩放">100%</button>
       <button id="settings" title="设置" aria-label="设置">⚙</button>
+    </div>
+
+    <div class="win-controls">
+      <button id="win-min" class="win-btn" title="最小化" aria-label="最小化">—</button>
+      <button id="win-max" class="win-btn" title="最大化 / 还原" aria-label="最大化">▢</button>
+      <button id="win-close" class="win-btn win-close" title="关闭" aria-label="关闭">✕</button>
     </div>
   </header>
 

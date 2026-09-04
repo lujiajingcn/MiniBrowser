@@ -360,9 +360,16 @@ function showPageContextMenu(x, y) {
     const wv = activeWebview();
     if (wv) wv.openDevTools();
   });
+  divider();
+  item('最小化窗口', () => {
+    if (window.electronAPI && window.electronAPI.windowControl) window.electronAPI.windowControl('min');
+  });
+  item('关闭窗口', () => {
+    if (window.electronAPI && window.electronAPI.windowControl) window.electronAPI.windowControl('close');
+  });
 
   const maxX = Math.max(0, window.innerWidth - 180);
-  const maxY = Math.max(0, window.innerHeight - 160);
+  const maxY = Math.max(0, window.innerHeight - 240);
   contextMenu.style.left = Math.min(x, maxX) + 'px';
   contextMenu.style.top = Math.min(y, maxY) + 'px';
   contextMenu.classList.remove('hidden');
@@ -544,6 +551,16 @@ savePageBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   showSavePageMenu(savePageBtn);
 });
+
+// 无边框窗口控制：最小化 / 最大化切换 / 关闭（系统标题栏已隐藏，由工具栏按钮承接）
+if (window.electronAPI && window.electronAPI.windowControl) {
+  const winMin = document.getElementById('win-min');
+  const winMax = document.getElementById('win-max');
+  const winClose = document.getElementById('win-close');
+  if (winMin) winMin.addEventListener('click', () => window.electronAPI.windowControl('min'));
+  if (winMax) winMax.addEventListener('click', () => window.electronAPI.windowControl('max'));
+  if (winClose) winClose.addEventListener('click', () => window.electronAPI.windowControl('close'));
+}
 
 function navigate(input) {
   const wv = activeWebview();

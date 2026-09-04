@@ -23,6 +23,7 @@ function createWindow(offscreen) {
     minHeight: 480,
     show: !offscreen,
     backgroundColor: '#1f2933',
+    frame: false, // 无边框：去掉系统原生标题栏，无框模式下网页可铺满整窗
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       webviewTag: true, // 允许在渲染进程中使用 <webview> 标签
@@ -156,6 +157,17 @@ app.whenReady().then(() => {
     }
   });
 
+  // 无边框窗口的窗口控制：最小化 / 最大化切换 / 关闭（由渲染进程的工具栏按钮或右键菜单触发）
+  ipcMain.on('mb-win-control', (event, action) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    if (action === 'min') win.minimize();
+    else if (action === 'max') {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    } else if (action === 'close') win.close();
+  });
+
   const args = parseLaunchArgs();
   createWindow(!!args.captureOut);
 
@@ -174,6 +186,7 @@ ipcMain.on('mb-create-window', (event, url) => {
     width: 1280,
     height: 820,
     backgroundColor: '#1f2933',
+    frame: false, // 与主窗口保持一致：无边框
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       webviewTag: true,

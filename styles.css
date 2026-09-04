@@ -142,6 +142,8 @@ body {
   color: var(--toolbar-fg);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
   z-index: 3;
+  /* 无边框窗口：工具栏兼作拖拽区（交互元素需 no-drag，见下方） */
+  -webkit-app-region: drag;
 }
 
 .nav-buttons,
@@ -163,6 +165,44 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.15s;
+  /* 拖拽区内，按钮/输入框保持可点击 */
+  -webkit-app-region: no-drag;
+}
+
+.toolbar input {
+  -webkit-app-region: no-drag;
+}
+
+/* 窗口控制按钮组（最小化/最大化/关闭），停靠在最右侧 */
+.win-controls {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  -webkit-app-region: no-drag;
+}
+
+.win-btn {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--toolbar-fg);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.win-btn:hover {
+  background: var(--toolbar-hover);
+}
+
+.win-close:hover {
+  background: #e81123;
+  color: #fff;
 }
 
 .toolbar button:hover {
@@ -294,6 +334,13 @@ body {
   overflow-x: auto;
   min-height: 38px;
   max-height: 38px;
+  /* 无边框窗口：标签栏空白区也可拖拽移动窗口 */
+  -webkit-app-region: drag;
+}
+
+.tab-bar .tab,
+.tab-bar button {
+  -webkit-app-region: no-drag;
 }
 
 .tab {
@@ -1235,4 +1282,25 @@ body.frameless .toolbar,
 body.frameless #bookmarks-bar,
 body.frameless .tab-bar {
   display: none;
+}
+
+/* 无框模式下工具栏被隐藏、失去拖拽区；用窗口正上方边缘的一条细热区替代。
+   平时透明不挡内容，鼠标移到顶部边缘时显示一条提示线，按住左键即可拖动窗口。 */
+#frameless-drag-strip {
+  display: none;
+}
+body.frameless #frameless-drag-strip {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  z-index: 60;
+  -webkit-app-region: drag;
+  background: transparent;
+  transition: background 0.15s;
+}
+body.frameless #frameless-drag-strip:hover {
+  background: rgba(127, 127, 127, 0.35);
 }
