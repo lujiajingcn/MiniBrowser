@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const { setupDownloads } = require('./downloads');
 const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
+const { setupSavePage } = require('./save-page');
 
 /**
  * 创建主窗口。
@@ -134,6 +135,7 @@ app.whenReady().then(() => {
   setupDownloads();
   setupSettingsIpc();
   setupVideoDownloads();
+  setupSavePage();
 
   const args = parseLaunchArgs();
   createWindow(!!args.captureOut);

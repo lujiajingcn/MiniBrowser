@@ -47,6 +47,7 @@ const setDlDirLabel = document.getElementById('set-dl-dir');
 const setDlChooseBtn = document.getElementById('set-dl-choose');
 const setAskSaveChk = document.getElementById('set-ask-save');
 const videoDlBtn = document.getElementById('video-dl');
+const savePageBtn = document.getElementById('save-page');
 const toastEl = document.getElementById('toast');
 
 const HOME_URL = 'https://www.example.com';
@@ -437,6 +438,12 @@ devtoolsBtn.addEventListener('click', () => {
 });
 videoDlBtn.addEventListener('click', () => {
   requestAndDownloadVideo();
+});
+
+savePageBtn.addEventListener('click', (e) => {
+  // 阻止冒泡：否则同一个 click 会触发 document 的「点菜单外关闭」逻辑，导致菜单刚弹出就被关掉（表现为「点击没反应」）
+  e.stopPropagation();
+  showSavePageMenu(savePageBtn);
 });
 
 function navigate(input) {
@@ -916,6 +923,79 @@ function showVideoContextMenu(payload, wv) {
   contextMenu.style.left = Math.min(x, maxX) + 'px';
   contextMenu.style.top = Math.min(y, maxY) + 'px';
   contextMenu.classList.remove('hidden');
+}
+
+// 保存页面（离线查看）：把当前活动 webview 的页面存为本地文件，断网可双击打开
+function activeGuestId() {
+  const wv = activeWebview();
+  if (!wv) return 0;
+  try {
+    if (typeof wv.getWebContentsId === 'function') return wv.getWebContentsId();
+    const wc = wv.getWebContents && wv.getWebContents();
+    if (wc && wc.id) return wc.id;
+  } catch (_) {
+    /* ignore */
+  }
+  return 0;
+}
+
+function fileNameOf(p) {
+  if (!p) return '';
+  const parts = String(p).split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+
+function showSavePageMenu(anchorEl) {
+  if (!anchorEl) return;
+  const rect = anchorEl.getBoundingClientRect();
+  contextMenuList.innerHTML = '';
+
+  function item(label, action) {
+    const li = document.createElement('li');
+    li.textContent = label;
+    li.addEventListener('click', () => {
+      try {
+        action();
+      } catch (_) {
+        /* ignore */
+      }
+      hideContextMenu();
+    });
+    contextMenuList.appendChild(li);
+  }
+
+  item('完整网页（HTML + 资源，兼容性最佳）', () => doSavePage('HTMLComplete'));
+  item('网页存档（.mhtml 单文件）', () => doSavePage('MHTML'));
+
+  const maxX = Math.max(0, window.innerWidth - 180);
+  contextMenu.style.left = Math.min(rect.left, maxX) + 'px';
+  contextMenu.style.top = rect.bottom + 4 + 'px';
+  contextMenu.classList.remove('hidden');
+}
+
+async function doSavePage(type) {
+  const id = activeGuestId();
+  if (!id) {
+    toast('未能获取当前页面，无法保存');
+    return;
+  }
+  if (savePageBtn) savePageBtn.disabled = true;
+  try {
+    if (!window.electronAPI || !window.electronAPI.savePage) {
+      toast('保存功能不可用');
+      return;
+    }
+    const res = await window.electronAPI.savePage(id, type);
+    if (res && res.ok) {
+      toast('已保存页面：' + fileNameOf(res.path) + '（断网可打开）');
+    } else {
+      toast('保存失败：' + ((res && res.error) || '未知错误'));
+    }
+  } catch (e) {
+    toast('保存失败：' + (e && e.message ? e.message : e));
+  } finally {
+    if (savePageBtn) savePageBtn.disabled = false;
+  }
 }
 
 // ---------- 下载管理 ----------

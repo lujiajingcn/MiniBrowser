@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "demo": "AUTO_DEMO=1 CAPTURE_OUT=demo-capture.png DEMO_URL=\"https://www.baidu.com\" electron --disable-gpu --no-sandbox --disable-gpu-compositing .",
-    "lint": "node --check main.js && node --check preload.js && node --check renderer.js && node --check webview-preload.js && node --check downloads.js && node --check settings-store.js && node --check video-download.js && node --check video-detect.js && node --check video-ffmpeg.js",
+    "lint": "node --check main.js && node --check preload.js && node --check renderer.js && node --check webview-preload.js && node --check downloads.js && node --check settings-store.js && node --check video-download.js && node --check save-page.js && node --check video-detect.js && node --check video-ffmpeg.js",
     "test": "node test-video-logic.js"
   },
   "author": "MiniBrowser",
