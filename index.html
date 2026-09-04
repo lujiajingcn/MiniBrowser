@@ -38,11 +38,11 @@
       <img id="favicon" class="favicon" alt="" />
       <input id="url" type="text" placeholder="输入网址，例如 example.com" spellcheck="false" autocomplete="off" />
       <button id="go" title="前往" aria-label="前往">→</button>
+      <button id="bookmark" title="收藏当前页" aria-label="收藏">☆</button>
     </div>
 
     <div class="extra-buttons">
       <button id="find" title="在页面中查找 (Ctrl+F)" aria-label="查找">🔍</button>
-      <button id="bookmark" title="收藏当前页" aria-label="收藏">☆</button>
       <button id="history" title="历史记录" aria-label="历史">🕘</button>
       <button id="devtools" title="开发者工具" aria-label="开发者工具">⌘</button>
       <button id="downloads" title="下载" aria-label="下载">
@@ -143,6 +143,14 @@
           <button id="set-clear-all">全部</button>
         </div>
       </div>
+      <div class="settings-row">
+        <span>收藏夹</span>
+        <div class="settings-actions">
+          <button id="set-import-bookmarks" type="button">导入…</button>
+          <button id="set-export-bookmarks" type="button">导出…</button>
+        </div>
+      </div>
+      <input id="set-import-file" type="file" accept=".html,.htm,text/html" class="hidden" />
     </div>
   </div>
 
@@ -152,6 +160,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="bookmarks-io.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

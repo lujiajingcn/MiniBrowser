@@ -48,6 +48,9 @@ const setDlChooseBtn = document.getElementById('set-dl-choose');
 const setAskSaveChk = document.getElementById('set-ask-save');
 const videoDlBtn = document.getElementById('video-dl');
 const savePageBtn = document.getElementById('save-page');
+const setImportBookmarksBtn = document.getElementById('set-import-bookmarks');
+const setExportBookmarksBtn = document.getElementById('set-export-bookmarks');
+const impFileInput = document.getElementById('set-import-file');
 const toastEl = document.getElementById('toast');
 
 const HOME_URL = 'https://www.example.com';
@@ -528,20 +531,22 @@ function toggleBookmark() {
   const idx = list.findIndex((x) => x.url === url);
   if (idx >= 0) {
     list.splice(idx, 1);
-    bookmarkBtn.textContent = '☆';
   } else {
     const t = activeTab();
     list.push({ title: (t && t.title) || url, url });
-    bookmarkBtn.textContent = '★';
   }
   saveBookmarks(list);
   renderBookmarks();
+  refreshBookmarkStar();
 }
 
 function refreshBookmarkStar() {
   const url = urlInput.value;
-  const list = getBookmarks();
-  bookmarkBtn.textContent = list.some((x) => x.url === url) ? '★' : '☆';
+  const marked = getBookmarks().some((x) => x.url === url);
+  // 两种状态：实心 ★（已收藏）/ 中空 ☆（未收藏），并同步提示文字与可访问性标签
+  bookmarkBtn.textContent = marked ? '★' : '☆';
+  bookmarkBtn.title = marked ? '取消收藏' : '收藏当前页';
+  bookmarkBtn.setAttribute('aria-label', marked ? '取消收藏' : '收藏当前页');
 }
 
 // ---------- 历史记录 ----------
@@ -1393,6 +1398,49 @@ setClearAllBtn.addEventListener('click', () => {
   renderBookmarks();
   refreshBookmarkStar();
   if (!historyPanel.classList.contains('hidden')) renderHistory();
+});
+// 导入收藏夹：选 Netscape 书签 HTML，合并去重后追加
+setImportBookmarksBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (impFileInput) impFileInput.click();
+});
+if (impFileInput) {
+  impFileInput.addEventListener('change', () => {
+    const file = impFileInput.files && impFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imported = window.BookmarksIO.parseNetscapeBookmarks(String(reader.result || ''));
+      if (!imported.length) {
+        toast('未从文件中解析到书签链接');
+      } else {
+        const list = getBookmarks();
+        const exists = new Set(list.map((b) => b.url));
+        let added = 0;
+        imported.forEach((b) => {
+          if (!exists.has(b.url)) { list.push(b); exists.add(b.url); added++; }
+        });
+        saveBookmarks(list);
+        renderBookmarks();
+        refreshBookmarkStar();
+        toast(added > 0 ? `已导入 ${added} 个收藏（当前共 ${list.length} 个）` : '没有新增收藏（链接均已存在）');
+      }
+      impFileInput.value = '';
+    };
+    reader.onerror = () => { toast('读取文件失败'); impFileInput.value = ''; };
+    reader.readAsText(file, 'utf-8');
+  });
+}
+// 导出收藏夹：交给主进程弹保存框并写出 Netscape 书签 HTML
+setExportBookmarksBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  window.electronAPI.exportBookmarks(getBookmarks())
+    .then((res) => {
+      if (res && res.ok) toast('已导出收藏夹：' + res.path);
+      else if (res && res.canceled) toast('已取消导出');
+      else toast('导出失败：' + ((res && res.error) || '未知错误'));
+    })
+    .catch((err) => toast('导出失败：' + ((err && err.message) || err)));
 });
 settingsBtn.addEventListener('click', (e) => {
   e.stopPropagation();

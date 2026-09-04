@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   videoDownloadAction: (id, action) => ipcRenderer.send('mb-video-action', { id, action }),
   // 保存页面（离线查看）：webContentsId = 活动 webview 的 guest webContents id，type = 'MHTML' | 'HTMLComplete'
   savePage: (webContentsId, type) => ipcRenderer.invoke('mb-save-page', webContentsId, type),
+  // 导出收藏夹：bookmarks = [{title,url}]，主进程弹保存框并写出 Netscape 书签 HTML
+  exportBookmarks: (bookmarks) => ipcRenderer.invoke('mb-export-bookmarks', bookmarks),
   // 请求主进程打开一个独立的新窗口
   createWindow: (url) => ipcRenderer.send('mb-create-window', url)
 });

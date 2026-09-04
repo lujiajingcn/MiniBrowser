@@ -1,12 +1,13 @@
 'use strict';
 
-const { app, BrowserWindow, webContents, ipcMain } = require('electron');
+const { app, BrowserWindow, webContents, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { setupDownloads } = require('./downloads');
 const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
 const { setupSavePage } = require('./save-page');
+const { buildNetscapeBookmarks } = require('./bookmarks-io');
 
 /**
  * 创建主窗口。
@@ -136,6 +137,24 @@ app.whenReady().then(() => {
   setupSettingsIpc();
   setupVideoDownloads();
   setupSavePage();
+
+  // 导出收藏夹：弹出保存对话框，生成 Netscape 书签 HTML 写入磁盘
+  ipcMain.handle('mb-export-bookmarks', async (event, bookmarks) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: '导出收藏夹',
+      defaultPath: 'bookmarks.html',
+      filters: [{ name: 'HTML 书签文件', extensions: ['html'] }]
+    });
+    if (canceled || !filePath) return { ok: false, canceled: true };
+    try {
+      const html = buildNetscapeBookmarks(bookmarks || [], 'MiniBrowser 收藏夹');
+      fs.writeFileSync(filePath, html, 'utf-8');
+      return { ok: true, path: filePath };
+    } catch (e) {
+      return { ok: false, error: e && e.message ? e.message : String(e) };
+    }
+  });
 
   const args = parseLaunchArgs();
   createWindow(!!args.captureOut);
