@@ -44,6 +44,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   // 下载操作：pause / resume / cancel / retry / open / folder
   downloadAction: (id, action) => ipcRenderer.send('mb-download-action', { id, action }),
+  // 视频下载：descriptor = { url, kind:'hls'|'direct', title, referer, pageUrl, ua }
+  downloadVideo: (descriptor) => ipcRenderer.invoke('mb-download-video', descriptor),
+  // 视频下载的操作：cancel / open / folder
+  videoDownloadAction: (id, action) => ipcRenderer.send('mb-video-action', { id, action }),
   // 请求主进程打开一个独立的新窗口
   createWindow: (url) => ipcRenderer.send('mb-create-window', url)
 });

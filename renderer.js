@@ -46,6 +46,8 @@ const setClearAllBtn = document.getElementById('set-clear-all');
 const setDlDirLabel = document.getElementById('set-dl-dir');
 const setDlChooseBtn = document.getElementById('set-dl-choose');
 const setAskSaveChk = document.getElementById('set-ask-save');
+const videoDlBtn = document.getElementById('video-dl');
+const toastEl = document.getElementById('toast');
 
 const HOME_URL = 'https://www.example.com';
 const WEBVIEW_UA =
@@ -378,6 +380,21 @@ function wireWebview(tab) {
       showContextMenu(x, y, link.url);
       return;
     }
+    if (e.channel === 'mb-videos-updated') {
+      lastPageVideos = (e.args && e.args[0]) || [];
+      if (pendingVideoDownload) {
+        pendingVideoDownload = false;
+        // 页面有多个视频时，弹出选择面板让用户挑下载哪一个；单个则直接下载
+        if (lastPageVideos.length > 1) showVideoPicker(lastPageVideos);
+        else downloadFromCachedVideos();
+      }
+      return;
+    }
+    if (e.channel === 'mb-video-context-menu') {
+      const payload = e.args && e.args[0] ? e.args[0] : {};
+      showVideoContextMenu(payload, wv);
+      return;
+    }
   });
   wv.addEventListener('will-navigate', (e) => {
     const u = e.url;
@@ -417,6 +434,9 @@ bookmarkBtn.addEventListener('click', toggleBookmark);
 devtoolsBtn.addEventListener('click', () => {
   const wv = activeWebview();
   if (wv) wv.openDevTools();
+});
+videoDlBtn.addEventListener('click', () => {
+  requestAndDownloadVideo();
 });
 
 function navigate(input) {
@@ -687,6 +707,217 @@ findBtn.addEventListener('click', () => {
   else closeFindBar();
 });
 
+// ---------- 页面视频下载 ----------
+// 视频源由 webview-preload 探测并通过 mb-videos-updated / mb-video-context-menu 上报。
+let lastPageVideos = []; // 最近一次上报的页面视频列表
+let pendingVideoDownload = false; // 工具栏按钮触发后，待上报回来即下载
+
+// 从一组源里挑「最适合下载」的那个：HLS 优先（能转封装为 MP4），其次 mp4，最后兜底
+function pickVideoSource(sources) {
+  if (!sources || !sources.length) return null;
+  const hls = sources.find((s) => s.kind === 'hls');
+  if (hls) return hls;
+  const mp4 = sources.find((s) => s.kind === 'mp4');
+  if (mp4) return mp4;
+  return sources[0];
+}
+
+function toast(msg) {
+  if (!toastEl) return;
+  toastEl.textContent = msg;
+  toastEl.classList.remove('hidden');
+  toastEl.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => {
+    toastEl.classList.remove('show');
+    toastEl.classList.add('hidden');
+  }, 2600);
+}
+
+// 发起一次视频下载请求（descriptor 至少含 url / kind）
+function invokeDownloadVideo(source, title) {
+  if (!source || !source.url) return;
+  if (!window.electronAPI || !window.electronAPI.downloadVideo) return;
+  const wv = activeWebview();
+  const pageUrl = wv ? wv.src || '' : '';
+  window.electronAPI
+    .downloadVideo({
+      url: source.url,
+      kind: source.kind === 'hls' ? 'hls' : 'direct',
+      title: title || 'video',
+      referer: pageUrl,
+      pageUrl: pageUrl,
+      ua: WEBVIEW_UA
+    })
+    .catch(() => {});
+  downloadsPanel.classList.remove('hidden'); // 展示下载进度
+}
+
+// 工具栏「下载页面视频」：先让 guest 上报当前页面视频源，再挑最佳源下载
+function requestAndDownloadVideo() {
+  const wv = activeWebview();
+  if (!wv) return;
+  pendingVideoDownload = true;
+  try {
+    wv.send('mb-request-videos');
+  } catch (_) {
+    /* ignore */
+  }
+  // 兜底：若 400ms 内没有任何上报，用已缓存的列表尝试
+  setTimeout(() => {
+    if (!pendingVideoDownload) return;
+    pendingVideoDownload = false;
+    if (lastPageVideos.length > 1) showVideoPicker(lastPageVideos);
+    else downloadFromCachedVideos();
+  }, 400);
+}
+
+function downloadFromCachedVideos() {
+  const sources = lastPageVideos.reduce((acc, v) => acc.concat(v.sources || []), []);
+  const chosen = pickVideoSource(sources);
+  if (chosen) invokeDownloadVideo(chosen, lastPageVideos[0] && lastPageVideos[0].title);
+  else toast('当前页面未检测到可下载的视频');
+}
+
+// 多视频时弹出选择面板，让用户挑选「下载哪一个视频 / 哪一个源」
+let videoPickerEl = null;
+let videoPickerList = null;
+
+function ensureVideoPickerDom() {
+  if (videoPickerEl) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'video-picker-overlay hidden';
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeVideoPicker();
+  });
+
+  const modal = document.createElement('div');
+  modal.className = 'video-picker';
+
+  const head = document.createElement('div');
+  head.className = 'vp-head';
+  const title = document.createElement('div');
+  title.className = 'vp-title';
+  title.textContent = '选择要下载的视频';
+  const close = document.createElement('button');
+  close.className = 'vp-close';
+  close.textContent = '✕';
+  close.setAttribute('aria-label', '关闭');
+  close.addEventListener('click', closeVideoPicker);
+  head.appendChild(title);
+  head.appendChild(close);
+
+  const sub = document.createElement('div');
+  sub.className = 'vp-sub';
+  sub.id = 'vp-sub';
+
+  const list = document.createElement('ul');
+  list.className = 'vp-list';
+
+  const foot = document.createElement('div');
+  foot.className = 'vp-foot';
+  const cancel = document.createElement('button');
+  cancel.className = 'vp-cancel';
+  cancel.textContent = '取消';
+  cancel.addEventListener('click', closeVideoPicker);
+  foot.appendChild(cancel);
+
+  modal.appendChild(head);
+  modal.appendChild(sub);
+  modal.appendChild(list);
+  modal.appendChild(foot);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && videoPickerEl && !videoPickerEl.classList.contains('hidden')) {
+      closeVideoPicker();
+    }
+  });
+
+  videoPickerEl = overlay;
+  videoPickerList = list;
+}
+
+function closeVideoPicker() {
+  if (videoPickerEl) videoPickerEl.classList.add('hidden');
+}
+
+function showVideoPicker(list) {
+  ensureVideoPickerDom();
+  videoPickerList.innerHTML = '';
+  const sub = document.getElementById('vp-sub');
+  if (sub) sub.textContent = '检测到 ' + list.length + ' 个视频，点击其中一个源开始下载';
+
+  list.forEach((v, i) => {
+    const sources = v.sources || [];
+    if (!sources.length) return;
+    const group = document.createElement('li');
+    group.className = 'vp-group';
+    group.textContent = '视频 ' + (i + 1);
+    videoPickerList.appendChild(group);
+    sources.forEach((s) => {
+      const li = document.createElement('li');
+      li.className = 'vp-item';
+      const label = document.createElement('span');
+      label.className = 'vp-kind';
+      label.textContent = s.kind === 'hls' ? 'HLS 流' : s.kind === 'mp4' ? 'MP4' : '视频';
+      const host = document.createElement('span');
+      host.className = 'vp-host';
+      host.textContent = hostOf(s.url);
+      li.appendChild(label);
+      li.appendChild(host);
+      li.addEventListener('click', () => {
+        invokeDownloadVideo(s, v.title);
+        closeVideoPicker();
+      });
+      videoPickerList.appendChild(li);
+    });
+  });
+
+  videoPickerEl.classList.remove('hidden');
+}
+
+// 右键视频弹出的菜单
+function showVideoContextMenu(payload, wv) {
+  const sources = (payload && payload.sources) || [];
+  const chosen = pickVideoSource(sources);
+  contextMenuList.innerHTML = '';
+  if (!chosen) {
+    const li = document.createElement('li');
+    li.className = 'disabled';
+    li.textContent = '无可下载的视频源';
+    contextMenuList.appendChild(li);
+  } else {
+    const main = document.createElement('li');
+    main.textContent = '下载视频（' + (chosen.kind === 'hls' ? 'HLS 流' : '视频文件') + '）';
+    main.addEventListener('click', () => {
+      invokeDownloadVideo(chosen, payload.title);
+      hideContextMenu();
+    });
+    contextMenuList.appendChild(main);
+    // 多个源时逐个列出，便于选择清晰度/线路
+    sources.forEach((s) => {
+      if (s === chosen) return;
+      const li = document.createElement('li');
+      li.textContent = '下载：' + (s.kind === 'hls' ? 'HLS 流' : '视频') + ' · ' + hostOf(s.url);
+      li.addEventListener('click', () => {
+        invokeDownloadVideo(s, payload.title);
+        hideContextMenu();
+      });
+      contextMenuList.appendChild(li);
+    });
+  }
+  const rect = wv ? wv.getBoundingClientRect() : { left: 0, top: 0 };
+  const x = rect.left + (payload.x || 0);
+  const y = rect.top + (payload.y || 0);
+  const maxX = Math.max(0, window.innerWidth - 180);
+  const maxY = Math.max(0, window.innerHeight - 120);
+  contextMenu.style.left = Math.min(x, maxX) + 'px';
+  contextMenu.style.top = Math.min(y, maxY) + 'px';
+  contextMenu.classList.remove('hidden');
+}
+
 // ---------- 下载管理 ----------
 const downloadsMap = new Map(); // id -> 下载记录
 
@@ -704,6 +935,13 @@ function formatBytes(bytes) {
 }
 
 function downloadStatusText(rec) {
+  if (rec.kind === 'video') {
+    if (rec.state === 'completed') return '已完成 · MP4';
+    if (rec.state === 'cancelled') return '已取消';
+    if (rec.state === 'interrupted') return rec.error ? '失败 · ' + rec.error : '已中断';
+    if (rec.pct) return '下载中 ' + rec.pct + '%';
+    return '准备中…';
+  }
   if (rec.state === 'completed') return '已完成 · ' + formatBytes(rec.totalBytes || rec.receivedBytes);
   if (rec.state === 'cancelled') return '已取消';
   if (rec.state === 'interrupted') return '已中断 · 可重试';
@@ -730,9 +968,12 @@ function addDlAction(container, rec, label, action) {
   const b = document.createElement('button');
   b.textContent = label;
   b.addEventListener('click', () => {
-    if (window.electronAPI && window.electronAPI.downloadAction) {
-      window.electronAPI.downloadAction(rec.id, action);
-    }
+    // 视频下载走独立通道（取消/打开/打开文件夹由主进程视频模块处理）
+    const api =
+      rec.kind === 'video' && window.electronAPI && window.electronAPI.videoDownloadAction
+        ? window.electronAPI.videoDownloadAction
+        : window.electronAPI && window.electronAPI.downloadAction;
+    if (api) api(rec.id, action);
   });
   container.appendChild(b);
 }
@@ -775,11 +1016,19 @@ function renderDownloads() {
     const actions = document.createElement('div');
     actions.className = 'dl-actions';
     if (!rec.done) {
-      addDlAction(actions, rec, rec.paused ? '继续' : '暂停', rec.paused ? 'resume' : 'pause');
-      addDlAction(actions, rec, '取消', 'cancel');
-    } else {
-      if (rec.state === 'completed') addDlAction(actions, rec, '打开', 'open');
-      if (rec.state === 'interrupted') addDlAction(actions, rec, '重试', 'retry');
+      // 视频下载由 ffmpeg 子进程执行，无法暂停/继续（主进程也未实现），只提供取消
+      if (rec.kind === 'video') {
+        addDlAction(actions, rec, '取消', 'cancel');
+      } else {
+        addDlAction(actions, rec, rec.paused ? '继续' : '暂停', rec.paused ? 'resume' : 'pause');
+        addDlAction(actions, rec, '取消', 'cancel');
+      }
+    } else if (rec.state === 'completed') {
+      addDlAction(actions, rec, '打开', 'open');
+      addDlAction(actions, rec, '打开文件夹', 'folder');
+    } else if (rec.state === 'interrupted') {
+      // 视频下载主进程未实现「重试」，仅提供「打开文件夹」定位失败产物；文件下载保留重试
+      if (rec.kind !== 'video') addDlAction(actions, rec, '重试', 'retry');
       addDlAction(actions, rec, '打开文件夹', 'folder');
     }
     li.appendChild(actions);
@@ -803,6 +1052,8 @@ function applyDownloadEvent(payload) {
       paused: false,
       done: false,
       pct: 0,
+      kind: payload.kind || 'file',
+      error: payload.error || '',
       startedAt: Date.now()
     });
   } else {
@@ -811,11 +1062,16 @@ function applyDownloadEvent(payload) {
     if (payload.type === 'updated') {
       rec.state = payload.state || rec.state;
       rec.paused = !!payload.paused;
-      rec.receivedBytes = payload.receivedBytes || 0;
-      if (payload.totalBytes) rec.totalBytes = payload.totalBytes;
-      rec.pct = rec.totalBytes
-        ? Math.min(100, Math.round((rec.receivedBytes / rec.totalBytes) * 100))
-        : 0;
+      // 视频下载由主进程直接给百分比（HLS 无法预知总字节），优先用其上报值
+      if (typeof payload.pct === 'number') {
+        rec.pct = Math.max(0, Math.min(100, payload.pct));
+      } else {
+        rec.receivedBytes = payload.receivedBytes || 0;
+        if (payload.totalBytes) rec.totalBytes = payload.totalBytes;
+        rec.pct = rec.totalBytes
+          ? Math.min(100, Math.round((rec.receivedBytes / rec.totalBytes) * 100))
+          : 0;
+      }
     } else if (payload.type === 'done') {
       rec.state = payload.state;
       rec.done = true;

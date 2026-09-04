@@ -837,3 +837,170 @@ body {
   background: var(--hover-bg-strong);
   pointer-events: none;
 }
+
+.context-menu li.disabled {
+  color: var(--fg-secondary);
+  cursor: default;
+  opacity: 0.7;
+}
+
+.context-menu li.disabled:hover {
+  background: transparent;
+}
+
+/* ---------- 视频下载条目标记 ---------- */
+.dl-item.video .dl-name::before {
+  content: '🎬 ';
+}
+
+/* ---------- 轻提示 toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%) translateY(8px);
+  max-width: 80vw;
+  padding: 9px 16px;
+  background: var(--surface-bg);
+  color: var(--fg-app);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  font-size: 13px;
+  z-index: 40;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+
+.toast.hidden {
+  display: none;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- 视频选择面板（页面有多个视频时） ---------- */
+.video-picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.video-picker-overlay.hidden {
+  display: none;
+}
+
+.video-picker {
+  width: min(420px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px var(--surface-shadow);
+  overflow: hidden;
+}
+
+.vp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.vp-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-app);
+}
+
+.vp-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.vp-close:hover {
+  color: var(--fg-app);
+}
+
+.vp-sub {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+}
+
+.vp-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+}
+
+.vp-group {
+  padding: 6px 14px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+  pointer-events: none;
+}
+
+.vp-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  color: var(--fg-app);
+}
+
+.vp-item:hover {
+  background: var(--hover-bg);
+}
+
+.vp-kind {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.vp-host {
+  font-size: 12px;
+  color: var(--fg-secondary);
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vp-foot {
+  padding: 10px 14px;
+  border-top: 1px solid var(--surface-border);
+  text-align: right;
+}
+
+.vp-cancel {
+  background: transparent;
+  border: 1px solid var(--surface-border);
+  color: var(--fg-app);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.vp-cancel:hover {
+  background: var(--hover-bg);
+}

@@ -118,4 +118,4 @@ ipcMain.on('mb-download-action', (event, payload) => {
   }
 });
 
-module.exports = { setupDownloads, downloads };
+module.exports = { setupDownloads, downloads, uniquePath };

@@ -5,6 +5,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { setupDownloads } = require('./downloads');
 const { setupSettingsIpc } = require('./settings-store');
+const { setupVideoDownloads } = require('./video-download');
 
 /**
  * 创建主窗口。
@@ -132,6 +133,7 @@ async function runDemoSequence(win, captureOut) {
 app.whenReady().then(() => {
   setupDownloads();
   setupSettingsIpc();
+  setupVideoDownloads();
 
   const args = parseLaunchArgs();
   createWindow(!!args.captureOut);
@@ -171,18 +173,23 @@ ipcMain.on('mb-create-window', (event, url) => {
  */
 app.on('web-contents-created', (event, contents) => {
   contents.on('will-attach-webview', (event, webPreferences, params) => {
-    // 说明：Electron 31 的 will-attach-webview **不会** 在 webPreferences 里暴露 webview 的
-    // preload（实测该对象的字段为 nodeIntegration / contextIsolation / sandbox ...，无 preload）。
-    // 因此原先基于该字段的「白名单比较」永远不成立，是死代码，且会误删无关键。
-    // webview 的 preload 属性只能由本应用渲染进程设置（guest 页面无权指定），
-    // 所以这里改为施加真正生效的加固策略。
+    // 安全加固：强制关闭危险能力。preload 只允许本应用自带的 webview-preload.js，
+    // 任何 guest 试图注入的其它 preload（理论上 guest 无法设置本宿主 webview 的属性，
+    // 但为稳妥仍做校验）一律剥离，避免任意代码执行。
     void params;
-    delete webPreferences.preloadURL;
+    const wpPreload = webPreferences.preloadURL || webPreferences.preload || '';
+    if (wpPreload && !/webview-preload\.js$/.test(wpPreload)) {
+      delete webPreferences.preloadURL;
+      delete webPreferences.preload;
+    }
     webPreferences.nodeIntegration = false;
     webPreferences.nodeIntegrationInSubFrames = false;
     webPreferences.contextIsolation = true;
     webPreferences.webSecurity = true;
-    webPreferences.sandbox = true;
+    // 注意：webview 预加载需要 require 本地纯逻辑模块（video-detect.js），
+    // 沙箱下只允许 require('electron')，故这里保持与「主窗口预加载」一致的 sandbox:false。
+    // 页面 JS 仍被 contextIsolation 隔离，无法触达预加载。
+    webPreferences.sandbox = false;
     webPreferences.allowRunningInsecureContent = false;
   });
 
