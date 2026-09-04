@@ -1,0 +1,839 @@
+/* ---------- 主题变量 ----------
+   浅色为 :root 默认值，深色通过 <html data-theme="dark"> 覆盖同名变量。
+   切换主题只改这一处变量表，业务选择器里禁止再出现裸色值。 */
+:root {
+  color-scheme: light;
+
+  --bg-app: #f5f7fa;
+  --fg-app: #1f2933;
+
+  --toolbar-bg: #1f2933;
+  --toolbar-fg: #e4e7eb;
+  --toolbar-hover: rgba(255, 255, 255, 0.12);
+  --toolbar-active: rgba(255, 255, 255, 0.2);
+
+  --urlbar-bg: #323f4b;
+  --urlbar-fg: #f5f7fa;
+
+  --bookmarks-bg: #e4e7eb;
+  --bookmark-bg: #fff;
+  --bookmark-fg: #1f2933;
+  --bookmark-hover: #f0f3f7;
+
+  --tabbar-bg: #2b3742;
+  --tab-bg: #3a4753;
+  --tab-fg: #cbd2d9;
+  --tab-active-bg: #f5f7fa;
+  --tab-active-fg: #1f2933;
+
+  /* 浮层通用面板：历史 / 查找 / 下载 / 设置 / 右键菜单 */
+  --surface-bg: #fff;
+  --surface-border: #d2dce6;
+  --surface-head-border: #e4e7eb;
+  --surface-shadow: rgba(0, 0, 0, 0.2);
+
+  --webview-bg: #fff;
+
+  --fg-secondary: #7b8794;
+  --fg-muted: #9aa5b1;
+
+  --hover-bg: #f0f3f7;
+  --hover-bg-strong: #e4e7eb;
+
+  --input-bg: #fff;
+  --input-border: #cbd2d9;
+  --input-fg: #1f2933;
+
+  --btn-ghost-bg: #f0f3f7;
+  --btn-ghost-fg: #52606d;
+  --btn-ghost-hover-bg: #e4e7eb;
+  --btn-ghost-hover-fg: #1f2933;
+
+  --track-bg: #e4e7eb;
+  --divider: #f0f3f7;
+
+  --accent: #2f80ed;
+  --accent-hover: #1c6fe0;
+  --on-accent: #fff;
+  --danger: #e02e2e;
+}
+
+/* 深色：只覆盖颜色变量，不改布局/尺寸，保证两套主题结构完全一致 */
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-app: #1a1d21;
+  --fg-app: #e4e7eb;
+
+  --toolbar-bg: #12151a;
+  --toolbar-fg: #e4e7eb;
+
+  --urlbar-bg: #242a31;
+  --urlbar-fg: #e4e7eb;
+
+  --bookmarks-bg: #1a1d21;
+  --bookmark-bg: #2a3037;
+  --bookmark-fg: #dfe4ea;
+  --bookmark-hover: #343b44;
+
+  --tabbar-bg: #1a1d21;
+  --tab-bg: #242a31;
+  --tab-fg: #aab3bd;
+  --tab-active-bg: #2f363f;
+  --tab-active-fg: #e4e7eb;
+
+  --surface-bg: #22272e;
+  --surface-border: #39414b;
+  --surface-head-border: #39414b;
+  --surface-shadow: rgba(0, 0, 0, 0.55);
+
+  --webview-bg: #1a1d21;
+
+  --fg-secondary: #9aa5b1;
+  --fg-muted: #7b8794;
+
+  --hover-bg: #2f363f;
+  --hover-bg-strong: #3a424b;
+
+  --input-bg: #16191d;
+  --input-border: #3d4650;
+  --input-fg: #dfe4ea;
+
+  --btn-ghost-bg: #2f363f;
+  --btn-ghost-fg: #aab3bd;
+  --btn-ghost-hover-bg: #3a424b;
+  --btn-ghost-hover-fg: #e4e7eb;
+
+  --track-bg: #39414b;
+  --divider: #2f363f;
+
+  --accent: #4b93f7;
+  --accent-hover: #3b83ea;
+  --danger: #f2544b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg-app);
+  color: var(--fg-app);
+  overflow: hidden;
+}
+
+/* ---------- 顶部工具栏 ---------- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--toolbar-bg);
+  color: var(--toolbar-fg);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  z-index: 3;
+}
+
+.nav-buttons,
+.extra-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar button {
+  background: transparent;
+  border: none;
+  color: var(--toolbar-fg);
+  font-size: 16px;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.toolbar button:hover {
+  background: var(--toolbar-hover);
+}
+
+.toolbar button:active {
+  background: var(--toolbar-active);
+}
+
+/* ---------- 地址栏 ---------- */
+.url-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--urlbar-bg);
+  border-radius: 18px;
+  padding: 0 12px;
+  height: 34px;
+}
+
+.url-bar .lock {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.url-bar .favicon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: none;
+  border-radius: 3px;
+}
+
+.url-bar .favicon.show {
+  display: inline-block;
+}
+
+.url-bar #url {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--urlbar-fg);
+  font-size: 14px;
+  outline: none;
+}
+
+.url-bar #go {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.url-bar #go:hover {
+  background: var(--accent-hover);
+}
+
+/* ---------- 收藏夹栏 ---------- */
+.bookmarks-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--bookmarks-bg);
+  overflow-x: auto;
+  min-height: 34px;
+}
+
+.bookmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: var(--bookmark-bg);
+  color: var(--bookmark-fg);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.bookmark:hover {
+  background: var(--bookmark-hover);
+}
+
+.bookmark .bm-del {
+  color: var(--fg-muted);
+  font-weight: bold;
+  margin-left: 2px;
+}
+
+.bookmark .bm-del:hover {
+  color: var(--danger);
+}
+
+.bookmark.add {
+  background: transparent;
+  box-shadow: none;
+  font-weight: bold;
+  color: var(--accent);
+}
+
+/* ---------- 标签页栏 ---------- */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  background: var(--tabbar-bg);
+  padding: 4px 6px 0;
+  overflow-x: auto;
+  min-height: 38px;
+  max-height: 38px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 6px 8px;
+  background: var(--tab-bg);
+  color: var(--tab-fg);
+  border: none;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--tab-active-bg);
+  color: var(--tab-active-fg);
+}
+
+.tab .tab-favicon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+}
+
+.tab .tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab .tab-close {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-weight: bold;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.tab .tab-close:hover {
+  color: var(--danger);
+}
+
+.tab.new {
+  background: transparent;
+  color: var(--tab-fg);
+  font-size: 18px;
+  max-width: 36px;
+  justify-content: center;
+}
+
+.tab.new:hover {
+  background: var(--toolbar-hover);
+}
+
+/* ---------- 网页视图容器 ---------- */
+.webview-container {
+  flex: 1 1 auto;
+  position: relative;
+  min-height: 0;
+  background: var(--webview-bg);
+}
+
+.webview-container webview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.webview-container webview:not(.active) {
+  display: none;
+}
+
+/* ---------- 加载进度条 ---------- */
+.loading-bar {
+  height: 2px;
+  width: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.loading-bar.active::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  animation: loading 1s infinite ease-in-out;
+}
+
+@keyframes loading {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+/* ---------- 历史记录面板 ---------- */
+.history-panel {
+  position: absolute;
+  top: 116px;
+  right: 12px;
+  width: 320px;
+  max-height: 60%;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  overflow: hidden;
+}
+
+.history-panel.hidden {
+  display: none;
+}
+
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--surface-head-border);
+  font-weight: 600;
+}
+
+.history-head button {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.history-list li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.history-list li:hover {
+  background: var(--hover-bg);
+}
+
+/* 空列表占位：不可点击，也不响应 hover 高亮 */
+.history-list li.history-empty {
+  color: var(--fg-muted);
+  padding: 10px;
+  cursor: default;
+}
+
+.history-list li.history-empty:hover {
+  background: transparent;
+}
+
+.history-list .h-title {
+  display: block;
+  color: var(--fg-app);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-list .h-url {
+  display: block;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 页面内查找条 ---------- */
+.find-bar {
+  position: absolute;
+  top: 116px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  padding: 6px 8px;
+  z-index: 15;
+}
+
+.find-bar.hidden {
+  display: none;
+}
+
+.find-bar #find-input {
+  width: 220px;
+  height: 28px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+  outline: none;
+  color: var(--input-fg);
+  background: var(--input-bg);
+}
+
+.find-bar #find-input:focus {
+  border-color: var(--accent);
+}
+
+.find-bar .find-count {
+  min-width: 54px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--btn-ghost-fg);
+  white-space: nowrap;
+}
+
+.find-bar .find-count.empty {
+  color: var(--danger);
+}
+
+.find-bar button {
+  border: none;
+  background: transparent;
+  color: var(--btn-ghost-fg);
+  font-size: 12px;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.find-bar button:hover {
+  background: var(--hover-bg);
+  color: var(--fg-app);
+}
+
+/* ---------- 下载面板 ---------- */
+.downloads-panel {
+  position: absolute;
+  top: 116px;
+  right: 12px;
+  width: 360px;
+  max-height: 60%;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  display: flex;
+  flex-direction: column;
+  z-index: 16;
+  overflow: hidden;
+}
+
+.downloads-panel.hidden {
+  display: none;
+}
+
+.downloads-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--surface-head-border);
+  font-weight: 600;
+}
+
+.downloads-head button {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.downloads-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+
+.downloads-list li.dl-item {
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.downloads-list li.dl-item + li.dl-item {
+  border-top: 1px solid var(--divider);
+}
+
+.downloads-list li.dl-empty {
+  color: var(--fg-muted);
+  padding: 10px;
+  font-size: 13px;
+}
+
+.dl-name {
+  font-size: 13px;
+  color: var(--fg-app);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-meta {
+  font-size: 11px;
+  color: var(--fg-secondary);
+  margin: 3px 0 5px;
+}
+
+.dl-bar {
+  height: 4px;
+  background: var(--track-bg);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dl-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.dl-item.done .dl-bar i {
+  background: var(--fg-muted);
+}
+
+.dl-item.interrupted .dl-meta {
+  color: var(--danger);
+}
+
+.dl-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dl-actions button {
+  border: none;
+  background: var(--btn-ghost-bg);
+  color: var(--btn-ghost-fg);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.dl-actions button:hover {
+  background: var(--btn-ghost-hover-bg);
+  color: var(--btn-ghost-hover-fg);
+}
+
+/* 工具栏下载按钮上的「进行中数量」角标 */
+.toolbar .extra-buttons #downloads {
+  position: relative;
+}
+
+.dl-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--danger);
+  color: var(--on-accent);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.dl-badge.hidden {
+  display: none;
+}
+
+/* 缩放级别指示器：内容宽度不定，需放宽固定 34px 的按钮宽度 */
+.toolbar .zoom-btn {
+  width: auto;
+  min-width: 46px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 设置面板 ---------- */
+.settings-panel {
+  position: absolute;
+  top: 116px;
+  right: 12px;
+  width: 340px;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  z-index: 16;
+  overflow: hidden;
+}
+
+.settings-panel.hidden {
+  display: none;
+}
+
+.settings-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--surface-head-border);
+  font-weight: 600;
+}
+
+.settings-body {
+  padding: 4px 12px 12px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  font-size: 13px;
+  color: var(--fg-app);
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--divider);
+}
+
+.settings-row input[type='text'],
+.settings-row select {
+  flex: 1 1 auto;
+  max-width: 190px;
+  height: 28px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+  outline: none;
+  color: var(--input-fg);
+  background: var(--input-bg);
+}
+
+.settings-row input[type='text']:focus,
+.settings-row select:focus {
+  border-color: var(--accent);
+}
+
+.settings-check {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.settings-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0 8px 0 0;
+  cursor: pointer;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+/* 下载目录：路径可能很长，单行截断，完整路径放 title */
+.dl-dir {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  align-self: center;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-actions button {
+  border: none;
+  background: var(--btn-ghost-bg);
+  color: var(--btn-ghost-fg);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.settings-actions button:hover {
+  background: var(--btn-ghost-hover-bg);
+  color: var(--btn-ghost-hover-fg);
+}
+
+/* ---------- 右键菜单 ---------- */
+.context-menu {
+  position: absolute;
+  min-width: 180px;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  z-index: 20;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.context-menu.hidden {
+  display: none;
+}
+
+.context-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.context-menu li {
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.context-menu li:hover {
+  background: var(--hover-bg);
+}
+
+.context-menu li.divider {
+  height: 1px;
+  padding: 0;
+  margin: 4px 0;
+  background: var(--hover-bg-strong);
+  pointer-events: none;
+}

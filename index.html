@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MiniBrowser</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+    // 在样式首次绘制前套用已保存的主题，避免启动时先闪一下浅色再变深色。
+    // 这里刻意只做「读 localStorage + 打 data-theme」一件事，其它逻辑留在 renderer.js。
+    (function () {
+      var theme = 'system';
+      try {
+        theme = (JSON.parse(localStorage.getItem('mb_settings') || '{}') || {}).theme || 'system';
+      } catch (e) {
+        /* 数据损坏时按跟随系统处理 */
+      }
+      var dark =
+        theme === 'dark' ||
+        (theme === 'system' &&
+          window.matchMedia &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    })();
+  </script>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="nav-buttons">
+      <button id="back" title="后退" aria-label="后退">◀</button>
+      <button id="forward" title="前进" aria-label="前进">▶</button>
+      <button id="reload" title="刷新 / 停止" aria-label="刷新">⟳</button>
+      <button id="home" title="主页" aria-label="主页">🏠</button>
+    </div>
+
+    <div class="url-bar">
+      <span id="lock" class="lock" title=""></span>
+      <img id="favicon" class="favicon" alt="" />
+      <input id="url" type="text" placeholder="输入网址，例如 example.com" spellcheck="false" autocomplete="off" />
+      <button id="go" title="前往" aria-label="前往">→</button>
+    </div>
+
+    <div class="extra-buttons">
+      <button id="find" title="在页面中查找 (Ctrl+F)" aria-label="查找">🔍</button>
+      <button id="bookmark" title="收藏当前页" aria-label="收藏">☆</button>
+      <button id="history" title="历史记录" aria-label="历史">🕘</button>
+      <button id="devtools" title="开发者工具" aria-label="开发者工具">⌘</button>
+      <button id="downloads" title="下载" aria-label="下载">
+        ⬇<span id="dl-badge" class="dl-badge hidden">0</span>
+      </button>
+      <button id="zoom" class="zoom-btn" title="缩放级别，点击重置 (Ctrl+0)" aria-label="缩放">100%</button>
+      <button id="settings" title="设置" aria-label="设置">⚙</button>
+    </div>
+  </header>
+
+  <div id="bookmarks-bar" class="bookmarks-bar"></div>
+
+  <div id="tab-bar" class="tab-bar"></div>
+
+  <div id="loading" class="loading-bar"></div>
+
+  <div id="find-bar" class="find-bar hidden">
+    <input
+      id="find-input"
+      type="text"
+      placeholder="在页面中查找"
+      spellcheck="false"
+      autocomplete="off"
+    />
+    <span id="find-count" class="find-count"></span>
+    <button id="find-prev" title="上一处 (Shift+Enter)" aria-label="上一处">▲</button>
+    <button id="find-next" title="下一处 (Enter)" aria-label="下一处">▼</button>
+    <button id="find-close" title="关闭 (Esc)" aria-label="关闭查找">✕</button>
+  </div>
+
+  <div id="webview-container" class="webview-container"></div>
+
+  <div id="history-panel" class="history-panel hidden">
+    <div class="history-head">
+      <span>历史记录</span>
+      <button id="history-clear" title="清空历史">清空</button>
+    </div>
+    <ul id="history-list" class="history-list"></ul>
+  </div>
+
+  <div id="downloads-panel" class="downloads-panel hidden">
+    <div class="downloads-head">
+      <span>下载</span>
+      <button id="downloads-clear" title="清除已完成">清除已完成</button>
+    </div>
+    <ul id="downloads-list" class="downloads-list"></ul>
+  </div>
+
+  <div id="settings-panel" class="settings-panel hidden">
+    <div class="settings-head"><span>设置</span></div>
+    <div class="settings-body">
+      <label class="settings-row">
+        <span>外观主题</span>
+        <select id="set-theme">
+          <option value="system">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </label>
+      <label class="settings-row">
+        <span>主页地址</span>
+        <input id="set-home" type="text" spellcheck="false" autocomplete="off" />
+      </label>
+      <label class="settings-row">
+        <span>搜索引擎</span>
+        <select id="set-engine">
+          <option value="bing">Bing</option>
+          <option value="google">Google</option>
+          <option value="baidu">百度</option>
+        </select>
+      </label>
+      <label class="settings-row settings-check">
+        <input id="set-restore" type="checkbox" />
+        <span>启动时恢复上次会话</span>
+      </label>
+      <label class="settings-row settings-check">
+        <input id="set-newtab" type="checkbox" />
+        <span>链接在新标签中打开</span>
+      </label>
+      <div class="settings-row">
+        <span>下载目录</span>
+        <div class="settings-actions">
+          <span id="set-dl-dir" class="dl-dir" title="">默认（下载）</span>
+          <button id="set-dl-choose" type="button">更改…</button>
+        </div>
+      </div>
+      <label class="settings-row settings-check">
+        <input id="set-ask-save" type="checkbox" />
+        <span>下载前询问保存位置</span>
+      </label>
+      <div class="settings-row">
+        <span>清除浏览数据</span>
+        <div class="settings-actions">
+          <button id="set-clear-history">历史</button>
+          <button id="set-clear-bookmarks">收藏</button>
+          <button id="set-clear-all">全部</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="context-menu" class="context-menu hidden">
+    <ul id="context-menu-list"></ul>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

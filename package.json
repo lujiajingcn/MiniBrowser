@@ -1,0 +1,16 @@
+{
+  "name": "mini-browser",
+  "version": "1.0.0",
+  "description": "A simple Electron-based browser application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "demo": "AUTO_DEMO=1 CAPTURE_OUT=demo-capture.png DEMO_URL=\"https://www.baidu.com\" electron --disable-gpu --no-sandbox --disable-gpu-compositing .",
+    "lint": "node --check main.js && node --check preload.js && node --check renderer.js && node --check webview-preload.js && node --check downloads.js && node --check settings-store.js"
+  },
+  "author": "MiniBrowser",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "31.7.7"
+  }
+}
