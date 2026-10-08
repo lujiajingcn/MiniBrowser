@@ -1387,7 +1387,10 @@ function showVideoContextMenu(payload, wv) {
     contextMenuList.appendChild(li);
   } else {
     const main = document.createElement('li');
-    main.textContent = '下载视频（' + (chosen.kind === 'hls' ? 'HLS 流' : '视频文件') + '）';
+    // 文案统一以「下载」开头，并显式说明产物始终是 MP4（HLS 流会转封装为 MP4）
+    main.textContent =
+      '下载（' + (chosen.kind === 'hls' ? 'HLS 流 → MP4' : '保存为 MP4') + '）' +
+      (payload && payload.playing ? ' · 正在播放' : '');
     main.addEventListener('click', () => {
       invokeDownloadVideo(chosen, payload.title);
       hideContextMenu();
@@ -1508,8 +1511,10 @@ function downloadStatusText(rec) {
   if (rec.kind === 'video') {
     if (rec.state === 'completed') return '已完成 · MP4';
     if (rec.state === 'cancelled') return '已取消';
-    if (rec.state === 'interrupted') return rec.error ? '失败 · ' + rec.error : '已中断';
+    if (rec.state === 'interrupted') return rec.error ? '失败 · ' + rec.error : '已中断 · 可重试';
+    if (rec.state === 'paused') return '已暂停 · ' + (rec.pct || 0) + '% · 可继续';
     if (rec.pct) return '下载中 ' + rec.pct + '%';
+    if (rec.note) return rec.note + '…';
     return '准备中…';
   }
   if (rec.state === 'completed') return '已完成 · ' + formatBytes(rec.totalBytes || rec.receivedBytes);
@@ -1586,19 +1591,18 @@ function renderDownloads() {
     const actions = document.createElement('div');
     actions.className = 'dl-actions';
     if (!rec.done) {
-      // 视频下载由 ffmpeg 子进程执行，无法暂停/继续（主进程也未实现），只提供取消
-      if (rec.kind === 'video') {
-        addDlAction(actions, rec, '取消', 'cancel');
-      } else {
-        addDlAction(actions, rec, rec.paused ? '继续' : '暂停', rec.paused ? 'resume' : 'pause');
-        addDlAction(actions, rec, '取消', 'cancel');
-      }
+      // 视频下载由 ffmpeg 子进程执行：暂停 = 杀分段进程 + 记断点，恢复时用 -ss 续下
+      // 并在末尾 concat 拼接（详见主进程 video-download.js），因此视频条目同样有
+      // 暂停/继续；失败态的「重试」= 从最后一个分段断点继续，已下载部分不必重下。
+      const isPaused = rec.state === 'paused' || rec.paused;
+      addDlAction(actions, rec, isPaused ? '继续' : '暂停', isPaused ? 'resume' : 'pause');
+      addDlAction(actions, rec, '取消', 'cancel');
     } else if (rec.state === 'completed') {
       addDlAction(actions, rec, '打开', 'open');
       addDlAction(actions, rec, '打开文件夹', 'folder');
     } else if (rec.state === 'interrupted') {
-      // 视频下载主进程未实现「重试」，仅提供「打开文件夹」定位失败产物；文件下载保留重试
-      if (rec.kind !== 'video') addDlAction(actions, rec, '重试', 'retry');
+      // 视频重试 = 从最后一个分段的断点继续，已下载部分不必重下
+      addDlAction(actions, rec, '重试', 'retry');
       addDlAction(actions, rec, '打开文件夹', 'folder');
     }
     li.appendChild(actions);
@@ -1624,6 +1628,7 @@ function applyDownloadEvent(payload) {
       pct: 0,
       kind: payload.kind || 'file',
       error: payload.error || '',
+      note: '',
       startedAt: Date.now()
     });
   } else {
@@ -1632,9 +1637,18 @@ function applyDownloadEvent(payload) {
     if (payload.type === 'updated') {
       rec.state = payload.state || rec.state;
       rec.paused = !!payload.paused;
+      // 失败/取消后主进程会先发 done（rec.done=true），用户点「重试」又发回
+      // state:'progressing'。这里必须把 done 复位，否则按钮会一直停在「重试」上，
+      // 看起来像卡住了。
+      if (payload.state === 'progressing' || payload.state === 'paused') {
+        rec.done = false;
+        rec.error = '';
+      }
       // 视频下载由主进程直接给百分比（HLS 无法预知总字节），优先用其上报值
       if (typeof payload.pct === 'number') {
         rec.pct = Math.max(0, Math.min(100, payload.pct));
+        // note：主进程的阶段性说明（如「直接转封装失败，正在转码重试」），出现进度即清除
+        rec.note = payload.note || '';
       } else {
         rec.receivedBytes = payload.receivedBytes || 0;
         if (payload.totalBytes) rec.totalBytes = payload.totalBytes;

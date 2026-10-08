@@ -74,6 +74,57 @@ function findVideoInPath(path) {
   return null;
 }
 
+// 视频可见区域的最小边长（px）：小于它的 <video>（埋点像素、1x1 探测节点）不参与命中，
+// 避免右键时被这些隐形节点抢走。
+const MIN_VIDEO_EDGE = 32;
+
+/**
+ * 依据「光标点 + 各视频的几何信息」挑选右键命中的视频（纯逻辑，便于单测）。
+ *
+ * 为什么需要它：真实播放器普遍会在 <video> 上盖一层（封面 poster、渐变遮罩、自绘控制条、
+ * 弹幕层），右键命中的是覆盖层，事件的 composedPath 里根本没有 VIDEO，于是「右键视频下载」
+ * 会静默失效。这里改为按坐标做几何判定，穿透覆盖层。
+ *
+ * @param {Array<object>} videos 每个元素形如
+ *   { rect:{left,top,right,bottom}, visible?:boolean, paused?:boolean, readyState?:number }
+ *   rect 为 null / 尺寸过小 / visible === false 的会被剔除。
+ * @param {number} x 光标横坐标（视口坐标，与 getBoundingClientRect 同一坐标系）
+ * @param {number} y 光标纵坐标
+ * @returns {number} 命中项在入参数组中的下标；无命中返回 -1
+ *
+ * 排序优先级：① 正在播放（!paused 且 readyState>=2）优先 → ② 面积更小者优先
+ * （更可能是「真正的播放器」而非铺满页面的背景视频） → ③ DOM 靠后者优先（通常层级更高）。
+ */
+function pickVideoAtPoint(videos, x, y) {
+  if (!Array.isArray(videos) || !videos.length) return -1;
+  let best = -1;
+  let bestRank = null;
+  for (let i = 0; i < videos.length; i++) {
+    const v = videos[i];
+    if (!v || !v.rect || v.visible === false) continue;
+    const r = v.rect;
+    const w = (r.right - r.left) || 0;
+    const h = (r.bottom - r.top) || 0;
+    if (w < MIN_VIDEO_EDGE || h < MIN_VIDEO_EDGE) continue;
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+    const playing = v.paused === false && (v.readyState == null || v.readyState >= 2);
+    const rank = [playing ? 0 : 1, w * h, -i];
+    if (bestRank === null || lessRank(rank, bestRank)) {
+      bestRank = rank;
+      best = i;
+    }
+  }
+  return best;
+}
+
+// 字典序比较：rank 结构固定为 [是否非播放, 面积, -DOM序]
+function lessRank(a, b) {
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i];
+  }
+  return false;
+}
+
 /**
  * 是否应把「页面级捕获到的 .m3u8」附加到该视频作为下载候选。
  * 返回 true 表示「自身没有可用直链源」，需要靠页面级 HLS 兜底：
@@ -91,5 +142,7 @@ module.exports = {
   normalizeUrl,
   collectVideoSources,
   findVideoInPath,
-  shouldAttachPageM3u8
+  shouldAttachPageM3u8,
+  pickVideoAtPoint,
+  MIN_VIDEO_EDGE
 };
