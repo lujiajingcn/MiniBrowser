@@ -1,5 +1,65 @@
 'use strict';
 
+/**
+ * ---------- 环境自愈：ELECTRON_RUN_AS_NODE ----------
+ *
+ * 某些开发环境（嵌在别的 Electron 应用里跑、被 IDE/CI 包装过的终端）
+ * 会在环境里注入 ELECTRON_RUN_AS_NODE=1。这个变量让 electron.exe
+ * **以纯 Node 的方式运行**：不创建窗口，且 require('electron') 返回的
+ * 是普通 Node 模块 —— app / ipcMain / BrowserWindow 全是 undefined，
+ * 于是 main.js 直接抛 "Cannot read properties of undefined (reading 'whenReady')"，
+ * 表现为「跑起来不像个应用」。
+ *
+ * 注意：必须在 require('electron') **之前**判断 —— 一旦 require 了，
+ * 再去判断就晚了（electron 模块已被加载，且是残缺的 Node 版本）。
+ * 这里用 process.env 提前判断，并用动态 require 避开顶层解构。
+ */
+if (process.env.ELECTRON_RUN_AS_NODE === '1') {
+  // 【打包后不能自动重启】
+  // 打包产物里应用代码在 app.asar 内，__dirname 指向 asar 内部路径，
+  // 拿它当「应用路径」重新拉起是错的（会启动出一个空白实例）。
+  // 而且打包后的 exe 是给最终用户用的，不该在用户眼前弹控制台报错。
+  // 所以：仅在**开发模式**（未打包）下自愈重启；
+  // 打包后遇到该变量直接退出，并在临时目录留下说明。
+  const isPackaged = __dirname.indexOf('app.asar') >= 0;
+
+  if (isPackaged) {
+    try {
+      require('node:fs').appendFileSync(
+        require('node:path').join(require('node:os').tmpdir(), 'minibrowser-start-error.log'),
+        '[MiniBrowser] 检测到 ELECTRON_RUN_AS_NODE=1，已退出。' +
+          '该环境变量会让 Electron 以纯 Node 模式运行，无法创建窗口。\r\n'
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    process.exit(1);
+  }
+
+  // 开发模式：清理环境变量并重新拉起真正的 Electron 进程。
+  // 用 spawn 而非 execFileSync：前者不阻塞，且能让新进程脱离当前终端。
+  const { spawn } = require('node:child_process');
+  const { execPath } = process;
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  try {
+    const child = spawn(execPath, [__dirname], {
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+      env,
+    });
+    child.unref();
+    // 不再往下走：当前进程以纯 Node 模式运行，留着也没用
+    process.exit(0);
+  } catch (e) {
+    // 拉起失败时只能提示（此时已无 Electron API 可用）
+    console.error('[main] 清除 ELECTRON_RUN_AS_NODE 后重新启动失败：', e && e.message);
+    process.exit(1);
+  }
+}
+
+// 到这里才安全地 require electron
 const { app, BrowserWindow, webContents, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -10,6 +70,21 @@ const { setupVideoDownloads } = require('./video-download');
 const { setupSavePage } = require('./save-page');
 const { buildNetscapeBookmarks } = require('./bookmarks-io');
 const { setupWindowDrag } = require('./window-drag');
+
+/**
+ * ---------- 独立的用户数据目录 ----------
+ *
+ * 开发模式与打包版若共用同一个 userData 目录会互相踩：
+ * 开发模式的 Electron 默认用 %APPDATA%\Electron，打包版用 %APPDATA%\<产品名>；
+ * 但只要产品名撞上（或开发者手工指定过路径），两边就会抢同一份
+ * Chromium 缓存，表现为打包版启动时报
+ *   "Unable to move the cache: 拒绝访问 (0x5)" / "Unable to create cache"，
+ * 窗口起不来。
+ *
+ * 这里给打包版指定一个专属目录名，与开发模式彻底隔离。
+ * 必须在 app ready 之前设置（setPath 对 userData 生效需早于 ready）。
+ */
+app.setPath('userData', path.join(app.getPath('appData'), 'MiniBrowser'));
 
 /**
  * 创建主窗口。
@@ -183,6 +258,33 @@ function setupShowServer() {
   });
   server.listen(SHOW_PORT, SHOW_HOST, () => {
     console.log('[show-server] 已启动，监听 ' + SHOW_HOST + ':' + SHOW_PORT + '（用时运行 show.js 恢复窗口）');
+  });
+}
+
+/**
+ * ---------- 单实例锁 ----------
+ *
+ * 正常桌面应用的必备行为：重复双击图标时应该**聚焦已有窗口**，
+ * 而不是开出第二个实例。两个实例会互相抢端口（show-server 的 39321）
+ * 与 Chromium 缓存目录，表现为「第二个窗口起不来 / 报缓存访问被拒」。
+ *
+ * 注意：单实例锁依赖 userData 路径，故必须放在 setPath('userData') 之后。
+ */
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  // 已有实例在跑，本进程直接退出。
+  // 用 process.exit 而不是 app.quit()：app.quit() 只是发起退出请求，
+  // 下面的同步代码仍会继续执行（创建窗口、起端口服务），导致
+  // 第二个实例照样抢端口与缓存。这里直接结束进程最干脆。
+  process.exit(0);
+} else {
+  app.on('second-instance', () => {
+    // 第二次启动：把已有窗口全部显示出来并聚焦
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w.isMinimized()) w.restore();
+      w.show();
+      w.focus();
+    }
   });
 }
 

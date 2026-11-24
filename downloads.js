@@ -44,6 +44,10 @@ function uniquePath(dir, filename) {
 }
 
 function setupDownloads() {
+  // 注册下载操作的 IPC 处理器（见下方 registerDownloadActionHandler 的说明：
+  // 必须在函数内注册，模块顶层时 ipcMain 尚未就绪）
+  registerDownloadActionHandler();
+
   session.defaultSession.on('will-download', (event, item, wc) => {
     const win =
       ownerWindowFor(wc) || BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
@@ -101,21 +105,30 @@ function setupDownloads() {
 }
 
 // 界面发起的下载操作：暂停 / 继续 / 重试 / 取消 / 打开文件 / 打开所在文件夹
-ipcMain.on('mb-download-action', (event, payload) => {
-  const id = payload && payload.id;
-  const action = payload && payload.action;
-  const rec = downloads.get(id);
-  if (!rec) return;
-  const item = rec.item;
-  try {
-    if (action === 'pause') item.pause();
-    else if (action === 'resume' || action === 'retry') item.resume();
-    else if (action === 'cancel') item.cancel();
-    else if (action === 'open') shell.openPath(rec.savePath);
-    else if (action === 'folder') shell.showItemInFolder(rec.savePath);
-  } catch (_) {
-    /* 文件已被删除等情况忽略 */
-  }
-});
+//
+// 【必须放在 setupDownloads() 内部】
+// 之前这行 ipcMain.on(...) 写在模块顶层 —— 即 require('./downloads') 被执行时
+// 就跑。此时 Electron 的 ipcMain 尚未就绪（undefined），
+// 直接报 "TypeError: Cannot read properties of undefined (reading 'on')"，
+// 表现为启动即崩溃 + 弹出原生 Error 对话框，完全不像一个正常应用。
+// 该问题自 578d28f 首次提交起就存在，只是一直没被触发到。
+function registerDownloadActionHandler() {
+  ipcMain.on('mb-download-action', (event, payload) => {
+    const id = payload && payload.id;
+    const action = payload && payload.action;
+    const rec = downloads.get(id);
+    if (!rec) return;
+    const item = rec.item;
+    try {
+      if (action === 'pause') item.pause();
+      else if (action === 'resume' || action === 'retry') item.resume();
+      else if (action === 'cancel') item.cancel();
+      else if (action === 'open') shell.openPath(rec.savePath);
+      else if (action === 'folder') shell.showItemInFolder(rec.savePath);
+    } catch (_) {
+      /* 文件已被删除等情况忽略 */
+    }
+  });
+}
 
 module.exports = { setupDownloads, downloads, uniquePath };

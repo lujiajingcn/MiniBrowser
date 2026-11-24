@@ -1,21 +1,82 @@
 {
-  "name": "mini-browser",
+  "name": "minibrowser",
+  "productName": "MiniBrowser",
   "version": "1.0.0",
   "description": "A simple Electron-based browser application",
   "main": "main.js",
+  "author": "MiniBrowser",
+  "license": "MIT",
   "scripts": {
-    "start": "electron .",
+    "start": "node start.js",
+    "start:log": "set MB_START_QUIET=0&& node start.js",
     "demo": "AUTO_DEMO=1 CAPTURE_OUT=demo-capture.png DEMO_URL=\"https://www.baidu.com\" electron --disable-gpu --no-sandbox --disable-gpu-compositing .",
-    "lint": "node --check main.js && node --check preload.js && node --check renderer.js && node --check webview-preload.js && node --check downloads.js && node --check settings-store.js && node --check video-download.js && node --check save-page.js && node --check bookmarks-io.js && node --check video-detect.js && node --check video-ffmpeg.js && node --check window-drag.js && node --check element-eraser.js && node --check diag-video-context.js && node --check diag-download-real.js && node --check diag-site-video.js && node --check test-video-logic.js && node --check test-video-pause-resume.js && node --check test-element-eraser.js",
+    "lint": "node --check main.js && node --check preload.js && node --check renderer.js && node --check webview-preload.js && node --check downloads.js && node --check settings-store.js && node --check video-download.js && node --check save-page.js && node --check bookmarks-io.js && node --check video-detect.js && node --check video-ffmpeg.js && node --check window-drag.js && node --check element-eraser.js && node --check start.js && node --check diag-video-context.js && node --check diag-download-real.js && node --check diag-site-video.js && node --check test-video-logic.js && node --check test-video-pause-resume.js && node --check test-element-eraser.js",
     "test": "node test-video-logic.js",
     "test:video": "node test-video-pause-resume.js",
     "test:eraser": "node test-element-eraser.js",
     "diag:video": "electron --disable-gpu --no-sandbox diag-video-context.js",
-    "diag:site": "electron --disable-gpu --no-sandbox diag-site-video.js"
+    "diag:site": "electron --disable-gpu --no-sandbox diag-site-video.js",
+    "icon": "electron build/make-icon.js",
+    "pack": "node tools/build-release.js",
+    "dist": "node tools/build-release.js"
   },
-  "author": "MiniBrowser",
-  "license": "MIT",
   "devDependencies": {
-    "electron": "31.7.7"
+    "electron": "31.7.7",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.minibrowser.app",
+    "productName": "MiniBrowser",
+    "copyright": "Copyright © 2026 MiniBrowser",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "electronDist": "node_modules/electron/dist",
+    "files": [      "main.js",
+      "preload.js",
+      "renderer.js",
+      "webview-preload.js",
+      "element-eraser.js",
+      "window-drag.js",
+      "downloads.js",
+      "settings-store.js",
+      "video-download.js",
+      "video-detect.js",
+      "video-ffmpeg.js",
+      "save-page.js",
+      "bookmarks-io.js",
+      "index.html",
+      "styles.css",
+      "show.js",
+      "!node_modules/**/*",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "MiniBrowser-${version}-${arch}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MiniBrowser"
+    },
+    "portable": {
+      "artifactName": "MiniBrowser-${version}-portable.${ext}"
+    }
   }
 }

@@ -1,6 +1,11 @@
 node_modules/
 .workbuddy/
 
+# 构建产物（electron-builder 输出，含上百 MB 的 exe，不应入库）
+release/
+release*/
+dist/
+
 # 端到端验证脚本产出的截图 / PDF（diag-*.js 每次运行都会重新生成，不应入库）
 *-preview.png
 demo-capture*.png

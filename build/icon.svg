@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- MiniBrowser 应用图标：圆角方块 + 地球 + 顶部地址栏条 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b7ddd"/>
+      <stop offset="100%" stop-color="#1e4f9e"/>
+    </linearGradient>
+    <clipPath id="clip">
+      <rect x="0" y="0" width="512" height="512" rx="96"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#clip)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+
+    <!-- 顶部「地址栏」条，呼应浏览器界面 -->
+    <rect x="0" y="0" width="512" height="96" fill="#0f2f66" opacity="0.55"/>
+    <circle cx="60" cy="48" r="15" fill="#ff6b6b"/>
+    <circle cx="104" cy="48" r="15" fill="#ffd93d"/>
+    <circle cx="148" cy="48" r="15" fill="#6bdc7f"/>
+    <rect x="196" y="34" width="248" height="28" rx="14" fill="#ffffff" opacity="0.32"/>
+
+    <!-- 地球 -->
+    <g transform="translate(256,300)">
+      <circle r="128" fill="#eaf4ff"/>
+      <!-- 经线 -->
+      <ellipse rx="128" ry="46" fill="none" stroke="#3b7ddd" stroke-width="11"/>
+      <ellipse rx="58" ry="128" fill="none" stroke="#3b7ddd" stroke-width="11"/>
+      <circle r="128" fill="none" stroke="#3b7ddd" stroke-width="11"/>
+      <!-- 纬线 -->
+      <path d="M -128 0 H 128" stroke="#3b7ddd" stroke-width="11" fill="none"/>
+      <!-- 大陆色块 -->
+      <path d="M -74 -66 q 34 -22 66 -4 q 12 26 -14 40 q -40 18 -58 -6 q -6 -18 6 -30 Z"
+            fill="#4fa3f7"/>
+      <path d="M 40 -50 q 40 -10 56 18 q 10 30 -16 44 q -34 16 -50 -12 q -10 -34 10 -50 Z"
+            fill="#4fa3f7"/>
+      <path d="M -30 42 q 40 -14 62 12 q 8 30 -20 46 q -40 18 -56 -12 q -6 -30 14 -46 Z"
+            fill="#4fa3f7"/>
+    </g>
+  </g>
+</svg>
