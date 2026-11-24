@@ -9,6 +9,7 @@ const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
 const { setupSavePage } = require('./save-page');
 const { buildNetscapeBookmarks } = require('./bookmarks-io');
+const { setupWindowDrag } = require('./window-drag');
 
 /**
  * 创建主窗口。
@@ -190,6 +191,8 @@ app.whenReady().then(() => {
   setupSettingsIpc();
   setupVideoDownloads();
   setupSavePage();
+  // Alt+左键拖动移动窗口（无边框窗口没有系统标题栏时的替代拖动方式）
+  setupWindowDrag();
 
   // 导出收藏夹：弹出保存对话框，生成 Netscape 书签 HTML 写入磁盘
   ipcMain.handle('mb-export-bookmarks', async (event, bookmarks) => {

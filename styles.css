@@ -56,6 +56,17 @@
   --accent-hover: #1c6fe0;
   --on-accent: #fff;
   --danger: #e02e2e;
+
+  /* 橡皮擦按钮激活态：红橙警示色，与danger同族但更亮，
+     在深色工具栏上要能一眼看出「当前处于擦除模式」。 */
+  --eraser-active-bg: rgba(255, 138, 76, 0.22);
+  --eraser-active-bg-hover: rgba(255, 138, 76, 0.32);
+  --eraser-active-fg: #ffb27a;
+  --eraser-active-border: rgba(255, 138, 76, 0.75);
+
+  /* 无框模式2 的四角直角标识色：半透明深灰，
+     在白底网页上清晰但不刺眼，透出桌面时也能辨认。 */
+  --frameless2-corner-color: rgba(80, 88, 96, 0.75);
 }
 
 /* 深色：只覆盖颜色变量，不改布局/尺寸，保证两套主题结构完全一致 */
@@ -110,6 +121,15 @@ html[data-theme='dark'] {
   --accent: #4b93f7;
   --accent-hover: #3b83ea;
   --danger: #f2544b;
+
+  /* 橡皮擦按钮激活态（深色主题下提高不透明度与亮度，保证对比度） */
+  --eraser-active-bg: rgba(255, 122, 51, 0.26);
+  --eraser-active-bg-hover: rgba(255, 122, 51, 0.38);
+  --eraser-active-fg: #ffc49b;
+  --eraser-active-border: rgba(255, 122, 51, 0.85);
+
+  /* 深色网页上用浅色直角才看得清 */
+  --frameless2-corner-color: rgba(232, 238, 245, 0.8);
 }
 
 * {
@@ -211,6 +231,24 @@ body {
 
 .toolbar button:active {
   background: var(--toolbar-active);
+}
+
+/* ---------- 橡皮擦按钮（可切换的选中态） ---------- */
+/* 用 aria-pressed 表达选中状态：语义上比自定义 class 更准确，
+   也让「按下」与「激活」在读屏软件里能被正确区分。 */
+.eraser-btn svg {
+  display: block;
+  pointer-events: none; /* 点击落在 button 上而非 svg，保证拖拽区判定稳定 */
+}
+
+.eraser-btn[aria-pressed='true'] {
+  background: var(--eraser-active-bg);
+  color: var(--eraser-active-fg);
+  box-shadow: inset 0 0 0 1px var(--eraser-active-border);
+}
+
+.eraser-btn[aria-pressed='true']:hover {
+  background: var(--eraser-active-bg-hover);
 }
 
 /* ---------- 地址栏 ---------- */
@@ -1305,6 +1343,161 @@ body.frameless #frameless-drag-strip:hover {
   background: rgba(127, 127, 127, 0.35);
 }
 
+/* ---------- 无框模式2：无框 + 四角「∟」直角标识页面范围 ---------- */
+/* 与 .frameless 一样隐藏工具栏等部件，故把 frameless 的选择器一并带上。 */
+body.frameless2 .toolbar,
+body.frameless2 #bookmarks-bar,
+body.frameless2 .tab-bar {
+  display: none;
+}
+/* 无框模式2 同样需要拖拽热区，否则窗口无法移动（工具栏已被隐藏，失去了 app-region: drag 区） */
+body.frameless2 #frameless-drag-strip {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  z-index: 60;
+  -webkit-app-region: drag;
+  background: transparent;
+  transition: background 0.15s;
+}
+body.frameless2 #frameless-drag-strip:hover {
+  background: rgba(127, 127, 127, 0.35);
+}
+
+/* 四角直角容器：铺满整个窗口，本身不参与命中测试，
+   否则会挡住网页的点击/滚动（它只是视觉标识）。 */
+#frameless2-corners {
+  display: none;
+}
+body.frameless2 #frameless2-corners {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  pointer-events: none; /* 关键：标识层不能吃掉页面交互 */
+}
+
+/* 「∟」形直角：由两条边框（L 形）拼成，比用字符「∟」更清晰、不受字体影响。
+   尺寸与描边通过变量控制，便于统一调整。
+
+   【关键：必须显式 block + content-box】
+   两个都是实测踩出来的坑，缺一个直角就废掉：
+   1) display: inline —— <i> 默认是行内元素。行内盒的 width/height 不生效，
+      元素尺寸被内容（空）撑成 0、再被边框撑成 3px 宽的细条，
+      且 position:fixed 的 left/right/bottom 定位全部错位
+      （实测 tr 的 left 变成 -3、bl 的 top 变成 -6，跑出视口外看不见）。
+   2) box-sizing: content-box —— 全局有 * { box-sizing: border-box }（styles.css:136）。
+      border-box 下 width/height 含边框，26px 会被 3px 边框挤掉。 */
+#frameless2-corners .corner {
+  --len: 26px; /* 直角的两条边长度 */
+  --thick: 3px; /* 描边粗细 */
+  display: block; /* 见上方说明：<i> 默认 inline，尺寸与定位都会失效 */
+  box-sizing: content-box; /* 见上方说明：不能继承全局的 border-box */
+  position: fixed;
+  width: var(--len);
+  height: var(--len);
+  pointer-events: none;
+  /* 用 currentColor 统一配色，主题切换时只改变量 */
+  border-color: var(--frameless2-corner-color);
+  border-style: solid;
+  border-width: 0;
+}
+
+/* 左上角：上边 + 左边 → 形状为「Γ」旋转后的 ∟ 开口朝右下 */
+#frameless2-corners .tl {
+  top: 6px;
+  left: 6px;
+  border-top-width: var(--thick);
+  border-left-width: var(--thick);
+}
+
+/* 右上角：上边 + 右边 */
+#frameless2-corners .tr {
+  top: 6px;
+  right: 6px;
+  border-top-width: var(--thick);
+  border-right-width: var(--thick);
+}
+
+/* 左下角：下边 + 左边 */
+#frameless2-corners .bl {
+  bottom: 6px;
+  left: 6px;
+  border-bottom-width: var(--thick);
+  border-left-width: var(--thick);
+}
+
+/* 右下角：下边 + 右边 */
+#frameless2-corners .br {
+  bottom: 6px;
+  right: 6px;
+  border-bottom-width: var(--thick);
+  border-right-width: var(--thick);
+}
+
+/* 透明模式下窗口背景全透明，直角要透出桌面。
+   桌面壁纸是不可控的：可能是白色系，也可能是深色系。
+   单纯换成浅色会在白色壁纸上消失（实测踩过：浅色直角画在白底上像素采样为纯白=看不见），
+   单纯用深色又会在深色壁纸上消失。
+   因此给直角加一圈深色外描边，形成「深色描边 + 浅色主体」的双层结构。
+
+   【关键：描边只能用 ::before 伪元素，不能用 box-shadow】
+   box-shadow 是沿**元素矩形盒的四条边**生成阴影的，而直角元素只在上/左（或上/右…）
+   两条边上设置了 border-width，另外两条边宽度为 0。
+   box-shadow 不管border 宽度，它会给整个矩形盒四边都描一遍，
+   于是 L 形被补成完整方框 —— 实测表现为「四角变成四个小正方形」。
+   伪元素则可以用同一套 border-width 逻辑，只描那两条边，形状仍是 L 形。 */
+body.transparent.frameless2 #frameless2-corners .corner {
+  --frameless2-corner-color: rgba(255, 255, 255, 0.92);
+  /* 深色描边颜色 */
+  --frameless2-corner-outline: rgba(0, 0, 0, 0.62);
+}
+
+/* 描边层：向外扩 1px 的同形L 形，用来做深色轮廓。
+   注意不能给 .corner 加 position:relative —— 那会覆盖 .corner 自己的
+   position:fixed（直角靠 fixed 相对视口定位到四角，一旦变成 relative
+   就会跟着文档流跑、四个角全部堆到左上角，实测 rect 出现 left=-6 之类的错位）。
+   因此描边层直接用 fixed 定位到与主体相同的角标，尺寸各边多1px。 */
+body.transparent.frameless2 #frameless2-corners .corner::before {
+  content: '';
+  position: fixed;
+  width: calc(var(--len) + 2px);
+  height: calc(var(--len) + 2px);
+  border-color: var(--frameless2-corner-outline);
+  border-style: solid;
+  border-width: 0;
+  /* 各方向描边宽度与主体一致：用负值定位让描边层向外扩 1px，
+     这样 L 形形状不变、只是比主体略大，形成外描边。 */
+  pointer-events: none;
+}
+/* 描边层沿用主体的 border-width 逻辑（只描两条边），
+   这里按四个角分别偏移到与主体重合、再外扩 1px。 */
+body.transparent.frameless2 #frameless2-corners .tl::before {
+  top: 5px; left: 5px;
+  border-top-width: var(--thick); border-left-width: var(--thick);
+}
+body.transparent.frameless2 #frameless2-corners .tr::before {
+  top: 5px; right: 5px;
+  border-top-width: var(--thick); border-right-width: var(--thick);
+}
+body.transparent.frameless2 #frameless2-corners .bl::before {
+  bottom: 5px; left: 5px;
+  border-bottom-width: var(--thick); border-left-width: var(--thick);
+}
+body.transparent.frameless2 #frameless2-corners .br::before {
+  bottom: 5px; right: 5px;
+  border-bottom-width: var(--thick); border-right-width: var(--thick);
+}
+
+/* 描边层在主体之下（主体背景透明，只有 border 有像素），
+   保证白色主体压在深色描边之上，任意壁纸上都能看清。 */
+
 /* ---------- 透明模式：外壳与网页背景透明，透出桌面 ---------- */
 /* 主进程已将窗口设为 transparent:true，普通模式下各部件自带不透明背景、外观不变；
    仅当 body 带上 .transparent 类时，下列外壳背景与网页容器背景变为透明，
@@ -1322,4 +1515,44 @@ body.transparent .webview-container {
 body.transparent .toolbar,
 body.transparent .tab-bar {
   box-shadow: 0 0 0 1px rgba(127, 127, 127, 0.3);
+}
+
+/* ---------- 完全透明模式：连外壳各部件的底色也一并清掉 ---------- */
+/* 透明模式只清了网页背景，外壳的工具栏/面板仍是不透明底色。
+   完全透明模式把它们也清掉，只留一条细边标示边界。 */
+body.full-transparent .toolbar,
+body.full-transparent #bookmarks-bar,
+body.full-transparent .tab-bar,
+body.full-transparent .webview-container,
+body.full-transparent .context-menu,
+body.full-transparent .history-panel,
+body.full-transparent .downloads-panel,
+body.full-transparent .settings-panel,
+body.full-transparent .bm-popover,
+body.full-transparent .toast {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* 面板失去底色后需要更强的边界线，否则浮在桌面上完全看不出轮廓 */
+body.full-transparent .history-panel,
+body.full-transparent .downloads-panel,
+body.full-transparent .settings-panel,
+body.full-transparent .bm-popover {
+  border-color: rgba(127, 127, 127, 0.55);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+/* 面板内的条目也要透出，但保留 hover 反馈 */
+body.full-transparent .history-list li:hover,
+body.full-transparent .dl-actions button:hover,
+body.full-transparent .bm-row-main:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+/* 外壳侧的图片处理：favicon 属于「当前页面的图形信息」，与「只保留文字」一致，隐藏之。
+   注意工具栏里的**交互按钮图标**（橡皮擦等）刻意保留 —— 隐藏后按钮就成了空白方块，
+   用户既看不出是什么也点不准，那不是「透明」而是「功能损坏」。
+   这些图标是 SVG 元素而非 <img>，本规则只匹配 <img>，不会误伤。 */
+body.full-transparent #favicon {
+  visibility: hidden;
 }

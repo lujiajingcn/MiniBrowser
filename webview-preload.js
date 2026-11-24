@@ -71,11 +71,29 @@ function normalizeHref(href) {
   return det.normalizeUrl(href, location.href);
 }
 
+// 判断橡皮擦是否正在页面主世界工作。
+// 橡皮擦开启时会在 <html> 上挂 data-mb-eraser="1"（见 element-eraser.js）。
+// 这是主世界 ↔ 隔离世界之间最简单可靠的通信方式：不用跨世界直接调用函数，
+// 只看 DOM 属性，任何一方都能随时读到。
+function isEraserActive() {
+  try {
+    const el = document.documentElement;
+    return !!(el && el.getAttribute('data-mb-eraser') === '1');
+  } catch (_) {
+    return false;
+  }
+}
+
 // 1. 左键点击所有可导航链接 → 新标签
 document.addEventListener(
   'click',
   (e) => {
     if (e.button !== 0) return; // 只处理左键
+    // 橡皮擦工作期间让路：此时点击是「删除这个元素」而不是「打开这个链接」。
+    // 不让路的话，本处理器与橡皮擦都在 click 捕获阶段竞争，而本处理器注册更早
+    // （页面加载时就装了），会先把链接开去新标签，橡皮擦再删除元素 ——
+    // 表现为「点链接既开了页面、元素也消失」。
+    if (isEraserActive()) return;
     const a = findAnchor(e.composedPath());
     if (!a) return;
     const href = a.href;
@@ -108,6 +126,8 @@ document.addEventListener(
   'click',
   (e) => {
     if (e.button !== 0 || !(e.ctrlKey || e.metaKey)) return;
+    // 橡皮擦工作期间让路（理由同第1 项）
+    if (isEraserActive()) return;
     const a = findAnchor(e.composedPath());
     if (!a) return;
     const href = a.href;
@@ -270,12 +290,88 @@ function docBaseUrl(doc) {
   }
 }
 
+// 6. Alt + 左键 → 拖动宿主窗口。
+//    <webview> 是独立 guest 渲染进程，鼠标事件不会冒泡到外壳 document，
+//    外壳自己听不到网页内的 mousedown，必须在这里检测后经 sendToHost 转出去。
+//
+//    【为什么要「移动后才判定为拖动」】
+//    Alt+左键在网页里本身是有意义的原生操作（Chrome/Firefox 的
+//    「Alt+左键 = 保存链接到本地」）。若按下就立刻上报并 preventDefault，
+//    会把「点链接下载」这个正常功能一并废掉。
+//    因此这里只记录起点，等鼠标真的移动超过阈值（DRAG_THRESHOLD）才认定为拖动；
+//    纯点击（未移动）则完全不干预网页行为。
+//    中途的位置更新交给主进程轮询屏幕坐标，本文件只上报 start / end 两个时刻。
+const DRAG_THRESHOLD = 4; // px，超过即认为是拖动意图
+
+let altDragPending = null; // { x, y } 已按下Alt+左键但尚未越过阈值
+
+function onAltDragMouseDown(e) {
+  if (e.button !== 0 || !e.altKey) return;
+  // 橡皮擦工作期间让路：Alt+左键此时是「删除这个元素」，
+  // 不能同时被当成「拖动窗口」的起点，否则会出现「元素没删掉、窗口却在动」。
+  if (isEraserActive()) return;
+  altDragPending = { x: e.clientX, y: e.clientY };
+}
+
+function onAltDragMouseMove(e) {
+  if (!altDragPending) return;
+  const dx = e.clientX - altDragPending.x;
+  const dy = e.clientY - altDragPending.y;
+  if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+  // 越过阈值 → 认定为拖动窗口，拦下网页后续行为
+  const start = altDragPending;
+  altDragPending = null;
+  ipcRenderer.sendToHost('mb-window-drag', { action: 'start', x: start.x, y: start.y });
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function onAltDragMouseUp(e) {
+  if (e.button !== 0) return;
+  const wasPending = !!altDragPending;
+  altDragPending = null;
+  // 只有「已认定为拖动」才需要通知结束；纯点击什么都不做
+  if (wasPending) return;
+  ipcRenderer.sendToHost('mb-window-drag', { action: 'end' });
+}
+
+// 7. 左键点击页面 → 通知外壳关闭右键菜单。
+//    外壳在 renderer.js 里监听了 document 的 click 来实现「点菜单外关闭菜单」，
+//    但 <webview> 是独立 guest 渲染进程，网页内的点击**不会冒泡到外壳 document**，
+//    于是网页内容区点击时菜单不关闭（工具栏等外壳区域却是好的）。
+//    这里检测左键点击后经 sendToHost 转发，由外壳统一关闭菜单。
+//
+//    注意只在「菜单已打开」时才上报（外壳侧也会再判一次，这里先省掉无效 IPC）：
+//    无法从 guest 得知菜单状态，故每次左键都发，由外壳判断是否需要关闭。
+//    用 mousedown 而非 click：菜单在 pointerdown 阶段就该消失，
+//    等click 会等到 mouseup 之后，视觉上「点下去菜单还在、松手才消失」。
+function onPagePointerDown(e) {
+  // 只处理左键（其它按键不应关闭菜单）；触屏的 pointerdown 事件 button 为 0，同样适用
+  if (e.button !== 0) return;
+  ipcRenderer.sendToHost('mb-page-pointer-down', {});
+}
+
+function onAltDragKeyUp(e) {
+  // Alt 先松开时也要结束拖动，否则窗口会黏着鼠标不放
+  if (e.key === 'Alt') {
+    altDragPending = null;
+    ipcRenderer.sendToHost('mb-window-drag', { action: 'end' });
+  }
+}
+
 // 把右键处理器装到某个文档上（幂等）
 function ensureDocListener(doc) {
   if (!doc || listenedDocs.has(doc)) return;
   listenedDocs.add(doc);
   try {
     doc.addEventListener('contextmenu', onContextMenu, true);
+    // Alt+拖动窗口：同样要覆盖同源 iframe（mousedown/mousemove 都不跨 frame冒泡）
+    doc.addEventListener('mousedown', onAltDragMouseDown, true);
+    doc.addEventListener('mousemove', onAltDragMouseMove, true);
+    doc.addEventListener('mouseup', onAltDragMouseUp, true);
+    doc.addEventListener('keyup', onAltDragKeyUp, true);
+    // 点页面关闭右键菜单：mousedown 也要覆盖同源 iframe（与上面同理）
+    doc.addEventListener('mousedown', onPagePointerDown, true);
   } catch (_) {
     /* ignore */
   }
@@ -480,6 +576,14 @@ function reportVideos() {
   });
   ipcRenderer.sendToHost('mb-videos-updated', list);
 }
+
+// ---------- 橡皮擦（删除页面元素）----------
+// 说明：橡皮擦**不需要** preload 参与。
+// 宿主（renderer.js）把 element-eraser.js 注入页面**主世界**并挂载
+// window.__mbEraserToggle / __mbEraserStart / __mbEraserStop，直接控制启停。
+// 之所以不用 preload（隔离世界）实现：删除元素要操作页面真实 DOM，
+// 而 <webview> 未提供 sendToGuest（宿主→guest 的直接通道），
+// executeJavaScript 是唯一可靠路径，且它本身就作用于主世界。
 
 // 页面结构变化即重新扫描；并对「延迟加载的播放器」做一段定时扫描
 const videoObserver = new MutationObserver(() => scanVideos());

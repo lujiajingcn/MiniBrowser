@@ -57,5 +57,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 无边框窗口控制：action = 'min' | 'max' | 'close'
   windowControl: (action) => ipcRenderer.send('mb-win-control', action),
   // 隐藏当前窗口（进程与下载继续；重新显示需在 cmd 中运行 show.js 连接本地服务）
-  hideWindow: () => ipcRenderer.send('mb-hide-window')
+  hideWindow: () => ipcRenderer.send('mb-hide-window'),
+  // Alt+左键拖动移动窗口：仅在「按下」与「松开」两个时刻通知主进程，
+  // 拖动过程中的位置更新由主进程按屏幕坐标自行轮询（见 window-drag.js）。
+  windowDragStart: (clientX, clientY) =>
+    ipcRenderer.send('mb-window-drag-start', { clientX, clientY }),
+  windowDragEnd: () => ipcRenderer.send('mb-window-drag-end')
 });

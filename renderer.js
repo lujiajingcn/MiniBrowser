@@ -48,6 +48,7 @@ const setDlChooseBtn = document.getElementById('set-dl-choose');
 const setAskSaveChk = document.getElementById('set-ask-save');
 const videoDlBtn = document.getElementById('video-dl');
 const savePageBtn = document.getElementById('save-page');
+const eraserBtn = document.getElementById('eraser');
 const setImportBookmarksBtn = document.getElementById('set-import-bookmarks');
 const setExportBookmarksBtn = document.getElementById('set-export-bookmarks');
 const impFileInput = document.getElementById('set-import-file');
@@ -191,6 +192,8 @@ function setActiveTab(id) {
   updateZoomIndicator();
   // 切换标签时清掉该页面残留的查找高亮（查找条处于关闭状态时）
   if (findBar.classList.contains('hidden')) stopFindOn(t.webview);
+  // 擦除模式下切标签：把橡皮擦应用到新标签的页面，否则切过去就没反应
+  if (eraserActive) applyEraser(t.webview, true);
   saveTabs();
 }
 
@@ -312,16 +315,112 @@ function toggleFrameless() {
   applyFrameless(!document.body.classList.contains('frameless'));
 }
 
+// ---------- 无框模式2（无框 + 四角直角标识页面范围）----------
+// 与「无框模式」的差别：同样隐藏工具栏/收藏夹栏/标签栏，
+// 但在窗口四角显示「∟」形直角，用于标识页面范围——
+// 无框后窗口没有系统标题栏，用户缺少「窗口在哪、页面到哪」的边界参照。
+//
+// 三种模式互斥：进入任一模式前先退出其它模式，
+// 否则 frameless + frameless2 同时生效时，直角标识会被无框模式的
+// 全屏网页盖住（或反之），出现「进入模式2 后直角消失」这类难以排查的现象。
+function applyFrameless2(on) {
+  const next = !!on;
+  document.body.classList.toggle('frameless2', next);
+  try {
+    localStorage.setItem('mb_frameless2', next ? '1' : '0');
+    // 持久化也要互斥：否则两个键同时为 '1'，重启恢复时会出现模式叠加。
+    // 这里不直接改localStorage 的 mb_frameless（那会让模式1 的 UI 文案失真），
+    // 而是在 enterFrameless2() 里调applyFrameless(false) 统一收口。
+  } catch (_) {
+    /* 隐私模式等 localStorage 不可用时忽略 */
+  }
+}
+
+function isFrameless2() {
+  return document.body.classList.contains('frameless2');
+}
+
+/** 进入无框模式2：先退出无框模式1（两者互斥），再开启模式2。 */
+function enterFrameless2() {
+  if (document.body.classList.contains('frameless')) applyFrameless(false);
+  applyFrameless2(true);
+}
+
+/** 退出无框模式2。 */
+function exitFrameless2() {
+  applyFrameless2(false);
+}
+
+function toggleFrameless2() {
+  if (isFrameless2()) exitFrameless2();
+  else enterFrameless2();
+}
+
 // ---------- 透明模式（窗口与页面背景透明，透出桌面）----------
 // 依赖主进程将 BrowserWindow 设为 transparent:true。普通模式下各部件自带不透明背景，外观不变；
 // 仅当 body 带上 .transparent 类时，外壳与网页背景变为透明。
 // 网页背景透明通过向每个 <webview> 注入 CSS 实现（html,body 背景透明）。
 const TRANSPARENT_PAGE_CSS =
   'html, body { background-color: transparent !important; background-image: none !important; }';
+
+// ---------- 完全透明模式（透明模式的加强版）----------
+// 透明模式只把 html/body 的背景清掉，页面内部元素（div/section/表格/卡片等）
+// 自带的背景色、背景图仍在，视觉上仍有大块色块。
+// 完全透明模式在此基础上更进一步：**只保留文字**，所有图形内容一律不显示，
+// 整个网页变成「悬浮在桌面上的纯文字」。
+//
+// 实现要点：
+// - 用 * 通配 + !important，压过页面自身样式（页面规则通常也带 !important，
+//   此时靠「后注入」取胜：insertCSS 注入的样式在页面样式表之后，优先级更高）；
+// - 同时清 background-image（渐变/纹理背景也是「不透明」的一大来源）；
+// - 图形元素用 **visibility: hidden** 而非 display: none：
+//   display:none 会让元素脱离文档流、图片占位消失、整页文字重排，
+//   视觉上会「塌掉」；visibility:hidden 保留占位与文字位置，只是不显示图形，
+//   符合「透明」的语义（东西还在那儿，只是不画出来）。
+//   附带好处：visibility:hidden 的元素不接收鼠标事件，不会出现「看不见但能点」。
+// - 文字本身不受影响：只针对媒体/图形类元素，不动 color 与 text-* 属性。
+// - box-shadow 不清：它是装饰性阴影而非背景，清掉会让页面结构难以辨认。
+const FULL_TRANSPARENT_PAGE_CSS = `
+html, body, body * {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+/* 伪元素的背景图（很多站点用它做装饰性小图标）同样清掉 */
+html::before, html::after, body::before, body::after, body *::before, body *::after {
+  background-image: none !important;
+}
+/* 隐藏一切图形内容，只留文字 */
+img, picture, svg, canvas, video, audio, iframe, embed, object,
+input[type="image"], input[type="file"], area, map, track {
+  visibility: hidden !important;
+}
+/* 边框图/遮罩图（clip-path 之外常见的图形来源） */
+body * {
+  border-image: none !important;
+  -webkit-mask-image: none !important;
+  mask-image: none !important;
+}
+/* 文字可读性保障：完全透明后网页文字直接浮在桌面上，
+   桌面壁纸明暗不可控 —— 深色壁纸配深色文字会完全看不见。
+   这里不改 color（避免与站点自身配色打架），而是给文字加一圈
+   极淡的对比描边：亮暗两种底色下都能读出轮廓。
+   实测 0.3px 描边对元素宽度的影响为 0px（不会引起重排）。
+   说明：描边施加在元素上，未含直接文字的容器同样会得到描边属性，
+   但因容器本身无字形故无视觉影响；这比逐个判断「是否含直接文本节点」代价低得多。 */
+html, body, body * {
+  -webkit-text-stroke: 0.3px rgba(128, 128, 128, 0.55);
+}`;
+
 const _transparentCssKeys = new WeakMap(); // webview -> insertCSS 返回的 key
+const _fullTransparentCssKeys = new WeakMap(); // webview -> 完全透明 CSS 的 key
 
 function isTransparent() {
   return document.body.classList.contains('transparent');
+}
+
+/** 是否处于完全透明模式。 */
+function isFullTransparent() {
+  return document.body.classList.contains('full-transparent');
 }
 
 // 对单个 webview 注入/移除透明 CSS。insertCSS 注入的样式在页面导航后依然生效，
@@ -349,6 +448,34 @@ function applyPageTransparent(webview, on) {
   }
 }
 
+/**
+ * 对单个 webview 注入/移除「完全透明」CSS。
+ * 与 applyPageTransparent 分开管理各自的 key：两者可叠加（完全透明必然包含透明），
+ * 但退出时要能各自独立撤销，不能互相影响。
+ */
+function applyPageFullTransparent(webview, on) {
+  if (!webview || typeof webview.insertCSS !== 'function') return;
+  if (on) {
+    if (_fullTransparentCssKeys.has(webview)) return;
+    try {
+      const key = webview.insertCSS(FULL_TRANSPARENT_PAGE_CSS);
+      _fullTransparentCssKeys.set(webview, key);
+    } catch (_) {
+      /* 某些页面 CSP 下 insertCSS 可能抛错，忽略 */
+    }
+  } else {
+    const key = _fullTransparentCssKeys.get(webview);
+    if (key != null) {
+      try {
+        webview.removeInsertedCSS(key);
+      } catch (_) {
+        /* ignore */
+      }
+      _fullTransparentCssKeys.delete(webview);
+    }
+  }
+}
+
 function applyTransparent(on) {
   document.body.classList.toggle('transparent', !!on);
   try {
@@ -363,6 +490,29 @@ function applyTransparent(on) {
 
 function toggleTransparent() {
   applyTransparent(!isTransparent());
+}
+
+// 完全透明模式：在透明模式基础上把所有元素的背景清掉。
+// 两者不是互斥关系 —— 完全透明必然需要窗口本身透明（transparent:true），
+// 所以进入完全透明时先确保透明模式开着；退出完全透明时只撤销加强的 CSS，
+// 透明模式本身保持不变（用户可能还想要「窗口透明但元素有底色」的状态）。
+function applyFullTransparent(on) {
+  const next = !!on;
+  document.body.classList.toggle('full-transparent', next);
+  try {
+    localStorage.setItem('mb_full_transparent', next ? '1' : '0');
+  } catch (_) {
+    /* 隐私模式等 localStorage 不可用时忽略 */
+  }
+  // 完全透明依赖透明模式：进入时若透明模式没开，先把它打开
+  if (next && !isTransparent()) applyTransparent(true);
+  tabs.forEach((t) => {
+    if (t.webview) applyPageFullTransparent(t.webview, next);
+  });
+}
+
+function toggleFullTransparent() {
+  applyFullTransparent(!isFullTransparent());
 }
 
 // 通用右键菜单：页面空白/选中文字、或外壳工具栏右键时弹出，
@@ -391,9 +541,19 @@ function showPageContextMenu(x, y) {
   }
 
   const on = document.body.classList.contains('frameless');
-  item(on ? '退出无框模式' : '进入无框模式', toggleFrameless);
+  item(on ? '退出无框模式' : '进入无框模式', () => {
+    // 与无框模式2互斥：进入模式1 前先退出模式2，避免两个模式叠加
+    if (!on && isFrameless2()) exitFrameless2();
+    toggleFrameless();
+  });
+  // 「进入无框模式2」紧跟在「进入无框模式」下方
+  const on2 = isFrameless2();
+  item(on2 ? '退出无框模式2' : '进入无框模式2', toggleFrameless2);
   const onT = isTransparent();
   item(onT ? '退出透明模式' : '进入透明模式', toggleTransparent);
+  // 「进入完全透明模式」紧跟在「进入透明模式」下方
+  const onFT = isFullTransparent();
+  item(onFT ? '退出完全透明模式' : '进入完全透明模式', toggleFullTransparent);
   divider();
   item('刷新', () => {
     const t = activeTab();
@@ -434,7 +594,12 @@ function showPageContextMenu(x, y) {
   contextMenu.classList.remove('hidden');
 }
 
-document.addEventListener('click', (e) => {
+// 点菜单之外 → 关闭菜单。用mousedown 而非 click：
+// 菜单是浮在页面之上的高层 UI，等到 click（mouseup 之后）才消失的话，
+// 视觉上会「按下去菜单还在、松手才消失」，手感发木。
+//网页内容区的点击不在这里覆盖（guest 进程不冒泡），由 webview-preload 转发
+// mb-page-pointer-down 走 ipc-message 分支处理，两侧时机保持一致。
+document.addEventListener('mousedown', (e) => {
   if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target)) {
     hideContextMenu();
   }
@@ -533,6 +698,23 @@ function wireWebview(tab) {
       else openFindBar();
       return;
     }
+    if (e.channel === 'mb-window-drag') {
+      // 网页内容区（guest 进程）里的 Alt+左键，由 webview-preload 检测后转发。
+      // 复用宿主的同一套开始/结束逻辑，主进程侧无需区分事件来自哪个进程。
+      const payload = (e.args && e.args[0]) || {};
+      const hook = window.__mbAltDrag;
+      if (!hook) return;
+      if (payload.action === 'start') hook.begin(payload.x || 0, payload.y || 0);
+      else hook.end();
+      return;
+    }
+    if (e.channel === 'mb-page-pointer-down') {
+      // 网页内容区左键点击 → 关闭右键菜单。
+      // 必须在 mousedown 阶段就关掉：菜单是高层 UI，若等 click（mouseup 之后）
+      // 才消失，视觉上会「点下去菜单还在、松手才消失」。
+      hideContextMenu();
+      return;
+    }
     if (e.channel === 'mb-context-menu') {
       const payload = e.args && e.args[0] ? e.args[0] : {};
       const link = payload.link;
@@ -569,6 +751,17 @@ function wireWebview(tab) {
   // 透明模式：webview 就绪后按当前透明状态注入/保持页面背景透明 CSS
   wv.addEventListener('dom-ready', () => {
     if (isTransparent()) applyPageTransparent(wv, true);
+    // 完全透明模式同理：页面导航后需重新注入「清掉所有元素背景」的 CSS，
+    // 否则表现为「刷新后退回普通透明模式」。
+    if (isFullTransparent()) applyPageFullTransparent(wv, true);
+    // 页面导航后主世界上下文会被清空，之前注入的橡皮擦脚本随之消失。
+    // 若用户正处于擦除模式，必须重新注入，否则表现为「刷新后橡皮擦失灵」。
+    // WeakSet 记的是「这个 webview 曾经注入过」，导航后要主动失效重来。
+    // 不限定活动标签：后台标签导航完，切回来时也应立即可用。
+    if (eraserActive) {
+      eraserInjected.delete(wv);
+      applyEraser(wv, true);
+    }
   });
 }
 
@@ -613,6 +806,109 @@ savePageBtn.addEventListener('click', (e) => {
   // 阻止冒泡：否则同一个 click 会触发 document 的「点菜单外关闭」逻辑，导致菜单刚弹出就被关掉（表现为「点击没反应」）
   e.stopPropagation();
   showSavePageMenu(savePageBtn);
+});
+
+// ---------- 橡皮擦（删除页面元素）----------
+// 交互：点按钮进入「擦除模式」→ 鼠标悬停高亮目标元素 → 点击删除该元素及其全部子元素。
+// 再点一次按钮（或在页面里按 Esc）退出擦除模式。
+//
+// 实现说明（为什么不用 DevTools 的 Ctrl+Shift+C 拾取器）：
+// <webview> 的 openDevTools() 只有 docked/undocked/detach 三种模式，
+// 没有「不显示窗口」的选项；即使 detach 后立刻 closeDevTools()，拾取器也随DevTools 前端销毁。
+// 更关键的是 DevTools 拾取器本身**没有删除 DOM 节点的能力**，只能改样式/复制外链。
+// 因此这里在页面主世界自绘拾取器，视觉与交互对齐 DevTools 元素检查器，但点击直接删除。
+//
+// 橡皮擦（删除页面元素）状态。提前到全局变量区声明：setActiveTab() 等
+// 靠前的函数也会读它，避免声明顺序靠后引起的 TDZ 困扰。
+let eraserActive = false;
+/** 已注入过橡皮擦脚本的 webview，避免重复注入（重复注入会导致监听器叠加、一次点击删多次）。 */
+const eraserInjected = new WeakSet();
+
+// 注入方式：把本地 element-eraser.js 读成文本，用 executeJavaScript 注入到页面**主世界**。
+// 必须注入主世界而非隔离世界（preload），因为要操作页面真实的 DOM。
+
+/** 读取本地橡皮擦脚本源码（浏览器端无 fs，走同步 XHR）。 */
+function loadEraserSource() {
+  if (loadEraserSource._cached) return loadEraserSource._cached;
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', 'element-eraser.js', false); // 同步：注入必须一次完成
+    xhr.send(null);
+    loadEraserSource._cached = xhr.responseText;
+  } catch (_) {
+    loadEraserSource._cached = null;
+  }
+  return loadEraserSource._cached;
+}
+
+/**
+ * 向指定 webview 注入橡皮擦脚本并设置启用状态。
+ * @param {boolean} on 是否启用（false 时只停用，不重复注入）
+ */
+function applyEraser(wv, on) {
+  if (!wv || typeof wv.executeJavaScript !== 'function') return;
+  // 停用时无需注入脚本，直接调用已挂载的全局函数即可
+  if (!on) {
+    if (!eraserInjected.has(wv)) return;
+    wv.executeJavaScript('try{ window.__mbEraserToggle && window.__mbEraserToggle(false); }catch(e){}')
+      .catch(() => {});
+    return;
+  }
+
+  if (eraserInjected.has(wv)) {
+    wv.executeJavaScript('try{ window.__mbEraserToggle && window.__mbEraserToggle(true); }catch(e){}')
+      .catch(() => {});
+    return;
+  }
+
+  const src = loadEraserSource();
+  if (!src) {
+    toast('橡皮擦脚本加载失败');
+    return;
+  }
+  // 注入脚本：element-eraser.js 执行时会把 start/stop 挂到 window 上，
+  // 这里只补一个统一切换入口 __mbEraserToggle，启停都走它。
+  // 注：页面内按 Esc 只会停用页面侧的拾取器，不回传宿主（主世界拿不到 ipcRenderer，
+  // executeJavaScript 也无法把回调带回宿主）。为避免「按钮亮着但功能已关」的状态不一致，
+  // 退出统一由按钮控制。
+  const code =
+    'try{' +
+    src +
+    '\n;window.__mbEraserToggle=function(on){try{on?window.__mbEraserStart():window.__mbEraserStop();}catch(e){}};' +
+    'window.__mbEraserToggle(true);' +
+    '}catch(e){console.error("[mb] eraser inject failed", e);}';
+  wv.executeJavaScript(code)
+    .then(() => {
+      eraserInjected.add(wv);
+    })
+    .catch((err) => {
+      console.error('[mb] eraser inject failed', err);
+      toast('橡皮擦无法作用于该页面');
+    });
+}
+
+/** 更新按钮的选中态（aria-pressed + title 提示）。 */
+function setEraserButtonState(on) {
+  eraserActive = !!on;
+  if (!eraserBtn) return;
+  eraserBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  eraserBtn.title = on
+    ? '橡皮擦已开启：点击页面元素即可删除（再次点击按钮退出）'
+    : '橡皮擦：选中后点击页面元素即可删除该元素及其全部子元素';
+}
+
+/** 对当前活动标签页的 webview 应用橡皮擦状态。 */
+function applyEraserToActiveTab(on) {
+  const wv = activeWebview();
+  if (wv) applyEraser(wv, on);
+}
+
+eraserBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const next = !eraserActive;
+  setEraserButtonState(next);
+  applyEraserToActiveTab(next);
+  if (next) toast('橡皮擦已开启：点击页面元素即可删除');
 });
 
 // 无边框窗口控制：最小化 / 最大化切换 / 关闭（系统标题栏已隐藏，由工具栏按钮承接）
@@ -952,20 +1248,32 @@ function bmAddCurrent() {
   const url = urlInput.value;
   if (!url) {
     toast('当前没有可收藏的页面');
+    closeBookmarksPopover();
     return;
   }
   const root = getBookmarks();
   if (window.BookmarksIO.findBookmarkByUrl(root, url)) {
     toast('该地址已在收藏夹中');
+    closeBookmarksPopover();
     return;
   }
   const t = activeTab();
-  _bmCurrent.children.push({ type: 'bookmark', title: (t && t.title) || url, url });
+  // 目标文件夹：正常路径下 _bmCurrent 由 openBookmarksPopover() 赋值，
+  // 但理论上可能为 null（弹层未打开时误调用），兜底退回根节点。
+  const target = _bmCurrent || getBookmarks();
+  // 先取目标文件夹标题：closeBookmarksPopover() 会把 _bmCurrent 置为 null，
+  // 之后再取就拿不到了。
+  const targetTitle = target.title || '全部书签';
+  target.children.push({ type: 'bookmark', title: (t && t.title) || url, url });
   saveBookmarks(root);
   renderBookmarks();
-  renderBookmarksPopover();
+  // 收藏完成后收起弹层：这是一次性操作，做完就没必要让浮层继续挡着页面。
+  // 与 bmOpenBookmark() 的处理一致（那里也是操作完即 closeBookmarksPopover()）。
+  // 注意顺序：先 renderBookmarks() 刷新收藏夹栏，再关闭弹层；
+  // 不要在关闭后再调 renderBookmarksPopover()，那会把内容渲染进一个已隐藏的浮层里。
+  closeBookmarksPopover();
   refreshBookmarkStar();
-  toast('已收藏到「' + (_bmCurrent.title || '全部书签') + '」');
+  toast('已收藏到「' + targetTitle + '」');
 }
 
 function bmOpenBookmark(node) {
@@ -2040,11 +2348,29 @@ try {
   /* 隐私模式下 localStorage 不可用时忽略 */
 }
 
+// 恢复上次的无框模式2 状态（无框 + 四角直角标识）。
+// 必须走 enterFrameless2() 而非 applyFrameless2(true)：前者会先把模式1 关掉，
+// 保证两种模式互斥（若直接调 applyFrameless2，两个 class 会同时挂上，
+// 直角标识可能被模式1 的样式影响而显示异常）。
+try {
+  if (localStorage.getItem('mb_frameless2') === '1') enterFrameless2();
+} catch (_) {
+  /* ignore */
+}
+
 // 恢复上次的透明模式状态（body.transparent 类先置好，之后各 webview 在 dom-ready 时注入透明 CSS）
 try {
   if (localStorage.getItem('mb_transparent') === '1') applyTransparent(true);
 } catch (_) {
   /* 隐私模式下 localStorage 不可用时忽略 */
+}
+
+// 恢复上次的完全透明模式状态。必须在透明模式恢复之后 ——
+// 完全透明依赖透明模式（窗口本身要透明），applyFullTransparent 内部也会确保这一点。
+try {
+  if (localStorage.getItem('mb_full_transparent') === '1') applyFullTransparent(true);
+} catch (_) {
+  /* ignore */
 }
 
 // 主进程拦截到的弹窗（页面 window.open() / target="_blank"）→ 在新标签打开
@@ -2100,9 +2426,101 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Esc：仅在无框模式下退出（普通浏览的 Esc 仍用于关闭查找条等，不受影响）
+// Esc：仅在无框模式（含模式2）下退出（普通浏览的 Esc 仍用于关闭查找条等，不受影响）
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.body.classList.contains('frameless')) {
-    applyFrameless(false);
-  }
+  if (e.key !== 'Escape') return;
+  if (isFrameless2()) exitFrameless2();
+  else if (document.body.classList.contains('frameless')) applyFrameless(false);
 });
+
+// ---------- Alt + 左键拖动移动窗口 ----------
+// 无边框窗口（frame:false）没有系统标题栏，正常情况下只能靠 CSS 的
+// -webkit-app-region: drag 区域来拖动。但那只覆盖工具栏/标签栏等固定区域，
+// 无法做到「在窗口任意位置按住 Alt 再左键拖动」。这里补上这个能力：
+// 按下时通知主进程开始跟随鼠标，松开时结束，中间由主进程自行轮询屏幕坐标。
+//
+// 说明：网页内容区（<webview>）是独立 guest 渲染进程，鼠标事件不冒泡到本 document，
+// 那一侧的 Alt 检测由 webview-preload.js 注入并经 mb-window-drag 通道转发过来
+// （见下方 ipc-message 分支）。
+(function setupAltDragToMove() {
+  if (!window.electronAPI || !window.electronAPI.windowDragStart) return;
+
+  // 与 guest 侧一致：移动超过阈值才认定为拖动。
+  // 否则「Alt+左键点按钮」这种正常操作会被误判成拖动，把按钮点击吃掉。
+  const DRAG_THRESHOLD = 4; // px
+
+  let pending = null; // { x, y } 已按下 Alt+左键但尚未越过阈值
+  let dragging = false; // 已认定拖动并已通知主进程
+
+  function notifyStart(x, y) {
+    dragging = true;
+    window.electronAPI.windowDragStart(x, y);
+  }
+
+  function end() {
+    pending = null;
+    if (!dragging) return;
+    dragging = false;
+    window.electronAPI.windowDragEnd();
+  }
+
+  // 用捕获阶段监听：页面里任何停止冒泡的处理器都不影响窗口拖动。
+  window.addEventListener(
+    'mousedown',
+    (e) => {
+      // 只认「Alt + 左键」
+      if (e.button !== 0 || !e.altKey) return;
+      if (dragging) return;
+      // 文本输入控件内不触发：Alt+左键在输入框/文本域里可能被用于选择单词等原生操作，
+      // 抢走会破坏正常编辑体验。
+      const t = e.target;
+      if (t) {
+        const tag = (t.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || t.isContentEditable) return;
+      }
+      pending = { x: e.clientX, y: e.clientY };
+    },
+    true
+  );
+
+  window.addEventListener(
+    'mousemove',
+    (e) => {
+      if (!pending || dragging) return;
+      const dx = e.clientX - pending.x;
+      const dy = e.clientY - pending.y;
+      if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return;
+      // 越过阈值 → 认定为拖动窗口，拦下本次点击的默认行为
+      const start = pending;
+      pending = null;
+      notifyStart(start.x, start.y);
+      if (e.preventDefault) e.preventDefault();
+    },
+    true
+  );
+
+  // 松开左键结束。注意用 window 而不是 document：
+  // 拖动过程中鼠标可能已移出文档范围，绑在 document 上有时收不到 mouseup。
+  window.addEventListener('mouseup', end, true);
+  window.addEventListener('blur', end);
+
+  // Alt 被提前松开（用户只松开 Alt 却还按着左键）时也要结束，
+  // 否则窗口会一直黏着鼠标跑。
+  window.addEventListener(
+    'keyup',
+    (e) => {
+      if (e.key === 'Alt') end();
+    },
+    true
+  );
+
+  // 供 webview-preload 转发的 Alt 拖动请求复用同一套开始/结束逻辑
+  window.__mbAltDrag = {
+    begin(x, y) {
+      if (dragging) return;
+      pending = null;
+      notifyStart(x, y);
+    },
+    end
+  };
+})();

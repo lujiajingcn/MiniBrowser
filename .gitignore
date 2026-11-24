@@ -1,2 +1,12 @@
 node_modules/
 .workbuddy/
+
+# 端到端验证脚本产出的截图 / PDF（diag-*.js 每次运行都会重新生成，不应入库）
+*-preview.png
+demo-capture*.png
+demo-capture*.pdf
+# 各 diag 脚本产出的截图，文件名各不相同，统一按「生成的 png 不入库」处理
+# （注意：不能写成 *.png，否则会误伤将来可能需要入库的正版图标资源）
+diag-*.png
+f2-e2e.png
+probe-*.png
