@@ -170,6 +170,11 @@ body {
 .extra-buttons {
   display: flex;
   gap: 4px;
+  /* 按钮组不可压缩：flex 默认 shrink:1，窗口变窄时会被压扁并溢出到视口外，
+     表现为「工具栏右侧的按钮（缩放/设置/最小化/最大化/关闭）不见了」。
+     空间不够时应压缩 URL 输入框（见 .url-bar 的 min-width: 0），
+     而不是把操作按钮裁掉 —— 按钮被裁后用户根本没法点。 */
+  flex: 0 0 auto;
 }
 
 .toolbar button {
@@ -198,6 +203,8 @@ body {
   display: flex;
   gap: 2px;
   margin-left: auto;
+  /* 同样不可压缩：最小化/最大化/关闭被裁掉的话窗口就失控了 */
+  flex: 0 0 auto;
   -webkit-app-region: no-drag;
 }
 
@@ -254,6 +261,10 @@ body {
 /* ---------- 地址栏 ---------- */
 .url-bar {
   flex: 1;
+  /* flex 项目默认 min-width:auto，内容（URL 文本）会把最小宽度撑到内容宽度，
+     导致空间不足时无法真正收缩。设为 0 后它才能压缩到 0，
+     把空间让给不可压缩的按钮组。 */
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -266,6 +277,8 @@ body {
 .url-bar .lock {
   font-size: 13px;
   opacity: 0.85;
+  /* 与 favicon 一样不可压缩，否则窄窗口下锁图标会被压变形 */
+  flex: 0 0 auto;
 }
 
 .url-bar .favicon {
@@ -282,6 +295,9 @@ body {
 
 .url-bar #url {
   flex: 1;
+  /* 同样需要 min-width:0，否则输入框的固有宽度（size 属性默认值）会把
+     .url-bar 撑到最小宽度以上，导致外层压缩失效。 */
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--urlbar-fg);
@@ -303,6 +319,98 @@ body {
 
 .url-bar #go:hover {
   background: var(--accent-hover);
+}
+
+/* 地址栏右侧的收藏按钮：与 #go 一样不可压缩。
+   .toolbar button 只设了 width/height，flex 项目默认仍可被压缩，
+   窄窗口下会被压扁变形（星星图标挤成一团）。 */
+.url-bar #bookmark {
+  flex: 0 0 auto;
+}
+
+/* ---------- 工具栏窄窗口适配 ----------
+   按钮组的最小占用宽度合计约 610px（导航 148 + 扩展 312 + 窗口控制 106，
+   再加gap 与内边距）。低于这个宽度时若不折叠，右侧按钮必然溢出被裁。
+
+   折叠策略：只折叠**确认有替代入口**的按钮。
+   被折叠的按钮及其替代途径：
+     - #home       → 地址栏直接输入网址
+     - #find       → Ctrl+F
+     - #zoom       → Ctrl+ +/- / Ctrl+0
+     - #devtools   → 右键菜单「开发者工具」
+   永不折叠的按钮（没有可靠替代入口，藏起来等于功能损坏）：
+     后退/前进/刷新、历史、下载、下载页面视频、保存页面、橡皮擦、设置、
+     收藏、以及最小化/最大化/关闭。
+
+   折叠这四个后，按钮组最小占用降到约 496px —— 更窄时靠收紧间距与按钮宽度
+   （见最下面的媒体查询）继续压缩，而不是牺牲功能。 */
+@media (max-width: 760px) {
+  /* 第一级：收起 home（地址栏可代替）、find（有 Ctrl+F） */
+  #home,
+  #find {
+    display: none;
+  }
+}
+
+@media (max-width: 660px) {
+  /* 第二级：收起 zoom（Ctrl+±/0 可代替）、devtools（右键菜单有） */
+  #zoom,
+  #devtools {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  /* 第三级：已无可再折叠的功能，改为收紧间距与按钮尺寸，
+     让核心按钮（历史/下载/视频/保存/橡皮擦/设置/窗口控制）全部保留。 */
+  .nav-buttons,
+  .extra-buttons {
+    gap: 2px;
+  }
+  .toolbar {
+    gap: 4px;
+    padding: 6px 6px;
+  }
+  .toolbar button {
+    width: 30px;
+  }
+  .win-btn {
+    width: 30px;
+  }
+  /* 缩放按钮在窄窗口下只显示数字（去掉 % 号）以省宽度 */
+  #zoom {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 440px) {
+  /* 第四级：极限窄（360~440px）。
+     到这个宽度按钮组已经占满。此时**不能**简单隐藏整个 .url-bar ——
+     里面还有「前往」与「收藏」两个按钮，藏了等于收藏功能消失。
+     正确做法：只隐藏 URL 输入框（它已被压到无法使用），
+     保留 #go / #bookmark / #favicon，保证收藏与前往仍可用；
+     同时把窗口控制按钮压到最小（22px），保证「最小化/最大化/关闭」永远可见 ——
+     这三个按钮一旦被裁，用户就既关不掉窗口也找不到操作入口。 */
+  .toolbar {
+    gap: 2px;
+    padding: 6px 2px;
+  }
+  .toolbar button,
+  .win-btn {
+    width: 22px;
+  }
+  .nav-buttons,
+  .extra-buttons {
+    gap: 0;
+  }
+  /* 只隐藏输入框，保留 url-bar 容器（收藏/前往按钮在里面） */
+  .url-bar #url {
+    display: none;
+  }
+  .url-bar {
+    padding: 0 6px;
+    gap: 2px;
+  }
 }
 
 /* ---------- 收藏夹栏 ---------- */
