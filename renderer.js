@@ -34,6 +34,7 @@ const downloadsClearBtn = document.getElementById('downloads-clear');
 const dlBadge = document.getElementById('dl-badge');
 const settingsBtn = document.getElementById('settings');
 const zoomBtn = document.getElementById('zoom');
+const deboldBtn = document.getElementById('debold');
 const zoomMenu = document.getElementById('zoom-menu');
 const zoomMenuList = document.getElementById('zoom-menu-list');
 const settingsPanel = document.getElementById('settings-panel');
@@ -131,6 +132,7 @@ function createTab(url, setActive = true) {
     favicon: '',
     loading: false,
     zoomLevel: 0,
+    debold: false, // 是否已开启「去粗体」
     webview: null
   };
   const webview = document.createElement('webview');
@@ -192,6 +194,7 @@ function setActiveTab(id) {
   else hideFavicon();
   refreshBookmarkStar();
   updateZoomIndicator();
+  updateDeboldButton();
   // 切标签后缩放菜单里的档位就不再对应当前标签了，直接收起。
   hideZoomMenu();
   // 切换标签时清掉该页面残留的查找高亮（查找条处于关闭状态时）
@@ -415,8 +418,89 @@ html, body, body * {
   -webkit-text-stroke: 0.3px rgba(128, 128, 128, 0.55);
 }`;
 
-const _transparentCssKeys = new WeakMap(); // webview -> insertCSS 返回的 key
-const _fullTransparentCssKeys = new WeakMap(); // webview -> 完全透明 CSS 的 key
+// ---------- 去粗体 ----------
+// 把当前页面的粗体字全部降为常规字重。
+//
+// 用 * 通配 + !important，而不是只挑 b/strong/h1 这类语义标签：
+//   语义标签会漏掉大量用 class 加粗的元素（.fw-bold、.text-bold、
+//   .font-semibold 等，各站点命名五花八门），以及内联 style 写的
+//   font-weight:600/700 —— 而这些恰恰是页面上「粗体」的主要来源。
+//
+// 已知副作用：原本用 font-weight:300/200 的**细体**字会被一并提为常规字重。
+// CSS 无法只对「计算值 ≥ 600」的元素生效（没有这样的选择器），
+// 只能在「全量降为 normal」与「逐个猜语义标签」之间取舍。
+// 细体字在网页里远比粗体字少见，这个副作用总体可接受。
+const DEBOLD_PAGE_CSS = `
+*, *::before, *::after {
+  font-weight: normal !important;
+}`;
+
+/**
+ * 每个 webview 记录各类注入 CSS 的 key。
+ * webview -> Map<名称, insertCSS 返回的真正 key>
+ */
+const _injectedCssKeys = new WeakMap();
+
+/**
+ * 给 webview 注入 / 移除一段 CSS，并记录 key 以便撤销。
+ *
+ * 【三个要点，全部实测踩过】
+ *
+ * 1) webview.insertCSS(code) 返回的是 **Promise<string>**（那把唯一 key），
+ *    不是字符串本身。
+ *    早先的实现把返回值直接存进 Map —— 存进去的其实是那个 Promise 对象，
+ *    后续 removeInsertedCSS(Promise) 会静默失败 → 样式永远撤不掉，
+ *    表现为「透明模式开了就关不掉」。
+ *    必须用 .then() 拿到真正的 key 再存。
+ *
+ * 2) insertCSS 注入的样式**在页面导航后会被清除**。
+ *    页面还没加载时注入的样式会落在 about:blank 上，等真页面加载完就没了 ——
+ *    所以导航完成后必须 force 重新注入，否则开关只在「首次打开时」有效。
+ *
+ * 3) force 重注入时旧的 key 已随导航失效，要直接丢弃重来，
+ *    不能因为「Map 里已经有」就跳过。
+ *
+ * @param {object} webview 目标 webview
+ * @param {string} name 用途标识（同一 webview 下互不干扰）
+ * @param {string} css 要注入的 CSS
+ * @param {boolean} on 是否开启
+ * @param {boolean} force 是否强制重新注入（导航后用）
+ */
+function setInjectedCss(webview, name, css, on, force) {
+  if (!webview || typeof webview.insertCSS !== 'function') return;
+  let store = _injectedCssKeys.get(webview);
+  if (!store) {
+    store = new Map();
+    _injectedCssKeys.set(webview, store);
+  }
+  const key = store.get(name);
+  if (!on) {
+    if (key != null) {
+      try {
+        const p = webview.removeInsertedCSS(key);
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch (_) {
+        /* ignore */
+      }
+      store.delete(name);
+    }
+    return;
+  }
+  if (key != null && !force) return;
+  store.delete(name); // 强制重注入：旧 key 已失效
+  try {
+    const p = webview.insertCSS(css);
+    if (p && typeof p.then === 'function') {
+      p.then((k) => {
+        if (k) store.set(name, k);
+      }).catch(() => {
+        /* 某些页面 CSP 下 insertCSS 可能失败，忽略 */
+      });
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 function isTransparent() {
   return document.body.classList.contains('transparent');
@@ -427,62 +511,40 @@ function isFullTransparent() {
   return document.body.classList.contains('full-transparent');
 }
 
-// 对单个 webview 注入/移除透明 CSS。insertCSS 注入的样式在页面导航后依然生效，
-// 故用 WeakMap 记录 key，已注入则跳过，避免重复叠加。
-function applyPageTransparent(webview, on) {
-  if (!webview || typeof webview.insertCSS !== 'function') return;
-  if (on) {
-    if (_transparentCssKeys.has(webview)) return;
-    try {
-      const key = webview.insertCSS(TRANSPARENT_PAGE_CSS);
-      _transparentCssKeys.set(webview, key);
-    } catch (_) {
-      /* 某些页面 CSP 下 insertCSS 可能抛错，忽略 */
-    }
-  } else {
-    const key = _transparentCssKeys.get(webview);
-    if (key != null) {
-      try {
-        webview.removeInsertedCSS(key);
-      } catch (_) {
-        /* ignore */
-      }
-      _transparentCssKeys.delete(webview);
-    }
-  }
+// 对单个 webview 注入/移除透明 CSS。
+function applyPageTransparent(webview, on, force) {
+  setInjectedCss(webview, 'transparent', TRANSPARENT_PAGE_CSS, on, force);
 }
 
 /**
  * 对单个 webview 注入/移除「完全透明」CSS。
- * 与 applyPageTransparent 分开管理各自的 key：两者可叠加（完全透明必然包含透明），
+ * 与透明模式分开管理各自的 key：两者可叠加（完全透明必然包含透明），
  * 但退出时要能各自独立撤销，不能互相影响。
  */
-function applyPageFullTransparent(webview, on) {
-  if (!webview || typeof webview.insertCSS !== 'function') return;
-  if (on) {
-    if (_fullTransparentCssKeys.has(webview)) return;
-    try {
-      const key = webview.insertCSS(FULL_TRANSPARENT_PAGE_CSS);
-      _fullTransparentCssKeys.set(webview, key);
-    } catch (_) {
-      /* 某些页面 CSP 下 insertCSS 可能抛错，忽略 */
-    }
-  } else {
-    const key = _fullTransparentCssKeys.get(webview);
-    if (key != null) {
-      try {
-        webview.removeInsertedCSS(key);
-      } catch (_) {
-        /* ignore */
-      }
-      _fullTransparentCssKeys.delete(webview);
-    }
-  }
+function applyPageFullTransparent(webview, on, force) {
+  setInjectedCss(webview, 'full-transparent', FULL_TRANSPARENT_PAGE_CSS, on, force);
+}
+
+/**
+ * 对单个 webview 注入/移除「去粗体」CSS。
+ *
+ * 【两个必须注意的点（都是实测踩出来的）】
+ *
+ * 1) webview.insertCSS(code) 返回的是 **Promise<string>**（那个唯一 key），
+ *    不是字符串本身。早期实现把返回值直接存进 Map，存的其实是那个 Promise 对象，
+ *    后续 removeInsertedCSS(Promise) 会静默失败 → 样式永远撤不掉。
+ *    必须用 .then() 拿到真正的 key 再存。
+ *
+ * 2) insertCSS 注入的样式**在页面导航后会被清除**，
+ *    所以导航完成后必须强制重新注入，否则开关只在首次打开时有效。
+ *    （force=true 时旧的 key 已随导航失效，直接丢弃重注入。）
+ */
+function applyPageDebold(webview, on, force) {
+  setInjectedCss(webview, 'debold', DEBOLD_PAGE_CSS, on, force);
 }
 
 function applyTransparent(on) {
-  document.body.classList.toggle('transparent', !!on);
-  try {
+  document.body.classList.toggle('transparent', !!on);  try {
     localStorage.setItem('mb_transparent', on ? '1' : '0');
   } catch (_) {
     /* 隐私模式等 localStorage 不可用时忽略 */
@@ -650,6 +712,12 @@ function wireWebview(tab) {
   wv.addEventListener('did-navigate', (e) => {
     tab.url = e.url;
     restoreZoomFor(tab); // 套用该站点记忆的缩放
+    // insertCSS 注入的样式在导航后会被清除，
+    // 所有开着的注入类开关都要强制重新注入一次（force=true，
+    // 因为旧 key 已随导航失效，不能因为「已注入过」就跳过）。
+    if (tab.debold) applyPageDebold(tab.webview, true, true);
+    if (isTransparent()) applyPageTransparent(tab.webview, true, true);
+    if (isFullTransparent()) applyPageFullTransparent(tab.webview, true, true);
     if (tab.id === activeTabId) {
       urlInput.value = e.url;
       updateLock(e.url);
@@ -2616,6 +2684,39 @@ zoomBtn.addEventListener('click', (e) => {
   }
   showZoomMenu();
 });
+
+// ---------- 去粗体 ----------
+/**
+ * 更新去粗体按钮的激活态（反映当前标签页的状态）。
+ */
+function updateDeboldButton() {
+  if (!deboldBtn) return;
+  const t = activeTab();
+  const on = !!(t && t.debold);
+  deboldBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+/**
+ * 切换当前标签页的「去粗体」。
+ *
+ * 状态挂在 tab 对象上，因此切标签时各自的开关互不影响；
+ * 页面导航后 insertCSS 的样式会被清除，需要在 did-navigate 里重新注入。
+ */
+function toggleDebold() {
+  const t = activeTab();
+  if (!t || !t.webview) return;
+  t.debold = !t.debold;
+  applyPageDebold(t.webview, t.debold);
+  updateDeboldButton();
+  toast(t.debold ? '已去除粗体' : '已恢复粗体');
+}
+
+if (deboldBtn) {
+  deboldBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleDebold();
+  });
+}
 
 // ---------- 初始化 ----------
 applyTheme(); // index.html 的引导脚本已抢先套用一次，这里补齐下拉框等 UI 状态

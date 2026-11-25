@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>去粗体测试页</title>
+  <style>
+    body {
+      background: #ffffff;
+      color: #222222;
+      font-size: 20px;
+      margin: 16px;
+      font-family: system-ui, sans-serif;
+    }
+    .bold-class { font-weight: 700; }
+    .bold-600 { font-weight: 600; }
+    .semibold { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <b id="b1">粗体 B</b><br />
+  <strong id="s1">粗体 strong</strong><br />
+  <h1 id="h1">标题 H1</h1>
+  <span id="fw" style="font-weight: 700">内联 font-weight:700</span><br />
+  <span id="bc" class="bold-class">class 加粗 bold-class</span><br />
+  <span id="b6" class="bold-600">class 加粗 bold-600</span><br />
+  <span id="norm">普通文字（应保持常规字重）</span>
+</body>
+</html>
