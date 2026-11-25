@@ -6,6 +6,10 @@ release/
 release*/
 dist/
 
+# 拖动诊断脚本产生的日志（MB_DRAG_DEBUG 调试输出）
+mb-drag-debug.log
+mb-drag-debug.log.err
+
 # 端到端验证脚本产出的截图 / PDF（diag-*.js 每次运行都会重新生成，不应入库）
 *-preview.png
 demo-capture*.png
