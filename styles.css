@@ -1401,6 +1401,66 @@ body {
   color: var(--danger);
 }
 
+/* ---------- 书签编辑行（行内编辑标题与地址） ---------- */
+.bm-edit-row {
+  padding: 4px 2px;
+  flex-wrap: wrap;
+}
+
+.bm-edit-title,
+.bm-edit-url {
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--fg-app);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.bm-edit-title {
+  flex: 1 1 40%;
+}
+
+.bm-edit-url {
+  flex: 2 1 50%;
+}
+
+.bm-edit-title:focus,
+.bm-edit-url:focus {
+  outline: none;
+  border-color: var(--accent, var(--fg-app));
+}
+
+.bm-edit-btn {
+  flex: none;
+  border: 1px solid var(--surface-border);
+  background: var(--input-bg);
+  color: var(--fg-app);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bm-edit-btn:hover {
+  background: var(--hover-bg);
+}
+
+/* 保存按钮：主色高亮；并把「保存/取消」整组推到右侧
+   （窄弹层里输入框会换行，按钮落到第二行时右对齐更像表单） */
+.bm-edit-save {
+  margin-left: auto;
+  background: var(--accent, var(--fg-app));
+  color: var(--bg-app, #fff);
+  border-color: transparent;
+}
+
+.bm-edit-save:hover {
+  opacity: 0.9;
+  background: var(--accent, var(--fg-app));
+}
+
 .bm-actions {
   display: flex;
   gap: 8px;

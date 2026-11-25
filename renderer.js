@@ -1063,11 +1063,13 @@ function renderBookmarks() {
   bookmarksBar.appendChild(manage);
 }
 
-// ---------- 收藏夹弹出层（浏览 / 新建文件夹 / 收藏到此处 / 删除 / 重命名） ----------
+// ---------- 收藏夹弹出层（浏览 / 新建文件夹 / 收藏到此处 / 删除 / 重命名 / 编辑书签） ----------
 let _bmCurrent = null; // 当前查看的文件夹节点（树中真实引用）
+let _bmEditing = null; // 正在编辑的书签节点（树中真实引用）；null 表示不在编辑态
 
 function openBookmarksPopover(folder) {
   _bmCurrent = folder || getBookmarks();
+  _bmEditing = null;
   renderBookmarksPopover();
   bmPopover.classList.remove('hidden');
 }
@@ -1075,6 +1077,7 @@ function openBookmarksPopover(folder) {
 function closeBookmarksPopover() {
   bmPopover.classList.add('hidden');
   _bmCurrent = null;
+  _bmEditing = null;
 }
 
 function renderBookmarksPopover() {
@@ -1115,6 +1118,11 @@ function renderBookmarksPopover() {
     bmList.appendChild(empty);
   }
   _bmCurrent.children.forEach((node) => {
+    // 正在编辑这一条 → 渲染编辑表单，取代普通行
+    if (_bmEditing === node) {
+      bmList.appendChild(renderBookmarkEditRow(node));
+      return;
+    }
     const row = document.createElement('div');
     row.className = 'bm-row ' + (node.type === 'folder' ? 'bm-row-folder' : 'bm-row-bm');
 
@@ -1145,6 +1153,17 @@ function renderBookmarksPopover() {
         bmRenameFolder(node);
       });
       row.appendChild(rename);
+    } else {
+      // 书签：编辑标题与地址
+      const edit = document.createElement('button');
+      edit.className = 'bm-row-act';
+      edit.textContent = '✎';
+      edit.title = '编辑书签';
+      edit.addEventListener('click', (e) => {
+        e.stopPropagation();
+        bmStartEditBookmark(node);
+      });
+      row.appendChild(edit);
     }
     const del = document.createElement('button');
     del.className = 'bm-row-act bm-row-del';
@@ -1167,6 +1186,129 @@ function renderBookmarksPopover() {
   });
 
   renderBmHeader();
+}
+
+/**
+ * 渲染书签的编辑表单行（标题 + 地址 + 保存 / 取消）。
+ *
+ * 做成**行内编辑**而非弹窗：被编辑的就是列表里的这一行，
+ * 原地替换最自然，也不会像 prompt 那样只能改一个字段。
+ *
+ * @param {object} node 被编辑的书签节点（树中真实引用）
+ * @returns {HTMLElement} 表单行元素
+ */
+function renderBookmarkEditRow(node) {
+  const row = document.createElement('div');
+  row.className = 'bm-row bm-edit-row';
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'bm-edit-title';
+  titleInput.value = node.title || '';
+  titleInput.placeholder = '名称';
+
+  const urlInputEl = document.createElement('input');
+  urlInputEl.type = 'text';
+  urlInputEl.className = 'bm-edit-url';
+  urlInputEl.value = node.url || '';
+  urlInputEl.placeholder = 'https://…';
+
+  const save = document.createElement('button');
+  save.className = 'bm-edit-btn bm-edit-save';
+  save.textContent = '保存';
+  save.title = '保存修改';
+
+  const cancel = document.createElement('button');
+  cancel.className = 'bm-edit-btn';
+  cancel.textContent = '取消';
+  cancel.title = '取消修改';
+
+  function commit() {
+    const t = titleInput.value.trim();
+    const u = urlInputEl.value.trim();
+    if (!u) {
+      toast('地址不能为空');
+      urlInputEl.focus();
+      return;
+    }
+    if (!t) {
+      toast('名称不能为空');
+      titleInput.focus();
+      return;
+    }
+    // 地址全局唯一：改成别的书签已有的地址会让收藏夹出现重复项，
+    // 且 findBookmarkByUrl / removeBookmarkByUrl 只会命中第一个，行为混乱。
+    //
+    // 注意：**不能**用「findBookmarkByUrl(root,u) !== node」来判断重复 ——
+    // 那是对象引用比较。收藏夹里若已存在**同一个 URL 的多个条目**
+    // （历史数据或导入产生），findBookmarkByUrl 返回的是第一个命中项，
+    // 它可能不是当前正在编辑的 node，于是会把「编辑自己」误判成
+    // 「地址被别的收藏占用」，导致保存被拒。
+    // 正确做法：找出所有占用该地址的节点，看是否**存在不是 node 的那一个**。
+    const root = getBookmarks();
+    const others = [];
+    (function collect(n) {
+      for (const c of (n && n.children) || []) {
+        if (c.type === 'bookmark') {
+          if (c.url === u && c !== node) others.push(c);
+        } else {
+          collect(c);
+        }
+      }
+    })(root);
+    if (others.length) {
+      toast('该地址已被其它收藏占用');
+      urlInputEl.focus();
+      return;
+    }
+    node.title = t;
+    node.url = u;
+    saveBookmarks(root);
+    _bmEditing = null;
+    renderBookmarks();
+    renderBookmarksPopover();
+    refreshBookmarkStar();
+    toast('已保存');
+  }
+
+  save.addEventListener('click', (e) => {
+    e.stopPropagation();
+    commit();
+  });
+  cancel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _bmEditing = null;
+    renderBookmarksPopover();
+  });
+
+  // 回车保存，Esc 取消
+  titleInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); _bmEditing = null; renderBookmarksPopover(); }
+  });
+  urlInputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); _bmEditing = null; renderBookmarksPopover(); }
+  });
+
+  row.appendChild(titleInput);
+  row.appendChild(urlInputEl);
+  row.appendChild(save);
+  row.appendChild(cancel);
+
+  // 渲染后聚焦标题并全选，便于直接改写
+  setTimeout(() => {
+    titleInput.focus();
+    titleInput.select();
+  }, 0);
+
+  return row;
+}
+
+/** 进入书签编辑态。 */
+function bmStartEditBookmark(node) {
+  _bmEditing = node;
+  renderBookmarksPopover();
 }
 
 function renderBmHeader() {
