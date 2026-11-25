@@ -193,18 +193,34 @@ async function run() {
   //   上边：x ∈ [INSET, INSET+LEN]，y ∈ [INSET, INSET+THICK]
   //   左边：x ∈ [INSET, INSET+THICK]，y ∈ [INSET, INSET+LEN]
   // 描边层向外扩 OUT px，所以最外沿到 INSET-OUT。
+  //
   // 采样点：
-  //   edge  = 有描边那条边的中点（应为深色）
+  //   edge  = **描边层独有**的那条外沿带（应为深色）
   //   off1/2 = 两条**空缺**边的外侧（应为背景，证明不是完整方框）
   //         沿空缺边方向再往里推 INSET+LEN+THICK+2，确保明确落在角标之外，
   //         但仍贴着该边的延长线，避免采到别的元素。
+  //
+  // 【edge 为什么取 INSET，而不是 INSET + THICK/2】
+  // 透明模式下直角是「深色描边层 + 浅色主体」双层结构。
+  // 关键事实（实测像素扫描得出）：描边层(::before) 是 .corner 的**子内容**，
+  // 按 CSS 层叠规则绘制在父元素**边框之上** —— 并不是 styles.css 注释里
+  // 曾经以为的「在主体之下」。
+  //
+  // 实测（x=10.33，DPR=1，H=700）：
+  //   tl 上边：深色带 y ∈ [4.5, 7.4)，之后转白（主体上边之外的部分）
+  //   bl 下边：深色带 y ∈ [691.4, 694.4)
+  // 即深色带就是「描边层的边框」本身，INSET 恰好落在其中
+  // （描边层比主体向外扩 1px，其边框覆盖 [INSET-1, INSET-1+THICK)，
+  //   主体边框覆盖 [INSET, INSET+THICK)，描边层在上 → 交集仍是深色）。
+  // 所以采样 INSET / H-INSET 稳落深色带；取 INSET+THICK/2 则会越过描边层
+  // 落到主体的浅色上。
   const mid = INSET + LEN / 2;
   const out1 = INSET + LEN + THICK + 2; // 沿边方向、角标之外
   const probes = {
-    tl: { edge: [mid, INSET + THICK / 2], off1: [out1, INSET + THICK / 2], off2: [INSET + THICK / 2, out1] },
-    tr: { edge: [W - INSET - LEN / 2, INSET + THICK / 2], off1: [W - out1, INSET + THICK / 2], off2: [W - INSET - THICK / 2, out1] },
-    bl: { edge: [mid, H - INSET - THICK / 2], off1: [INSET + THICK / 2, H - out1], off2: [out1, H - INSET - THICK / 2] },
-    br: { edge: [W - INSET - LEN / 2, H - INSET - THICK / 2], off1: [W - out1, H - INSET - THICK / 2], off2: [W - INSET - THICK / 2, H - out1] },
+    tl: { edge: [mid, INSET], off1: [out1, INSET + THICK / 2], off2: [INSET + THICK / 2, out1] },
+    tr: { edge: [W - INSET - LEN / 2, INSET], off1: [W - out1, INSET + THICK / 2], off2: [W - INSET - THICK / 2, out1] },
+    bl: { edge: [mid, H - INSET], off1: [INSET + THICK / 2, H - out1], off2: [out1, H - INSET - THICK / 2] },
+    br: { edge: [W - INSET - LEN / 2, H - INSET], off1: [W - out1, H - INSET - THICK / 2], off2: [W - INSET - THICK / 2, H - out1] },
   };
   for (const [c, p] of Object.entries(probes)) {
     const e = read(p.edge[0], p.edge[1]);

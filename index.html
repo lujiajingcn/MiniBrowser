@@ -76,7 +76,7 @@
           <rect fill="currentColor" x="3" y="18.25" width="18" height="1.75" rx="0.6" />
         </svg>
       </button>
-      <button id="zoom" class="zoom-btn" title="缩放级别，点击重置 (Ctrl+0)" aria-label="缩放">100%</button>
+      <button id="zoom" class="zoom-btn" title="缩放级别 (Ctrl+0 恢复默认)" aria-label="缩放">100%</button>
       <button id="settings" title="设置" aria-label="设置">⚙</button>
     </div>
 
@@ -201,6 +201,11 @@
 
   <div id="context-menu" class="context-menu hidden">
     <ul id="context-menu-list"></ul>
+  </div>
+
+  <!-- 缩放菜单：点击工具栏的缩放按钮弹出，可选百分比 / 恢复默认 -->
+  <div id="zoom-menu" class="zoom-menu hidden">
+    <ul id="zoom-menu-list"></ul>
   </div>
 
   <div id="toast" class="toast hidden"></div>

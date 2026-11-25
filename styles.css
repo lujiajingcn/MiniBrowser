@@ -1051,6 +1051,63 @@ body {
   background: transparent;
 }
 
+/* ---------- 缩放菜单（点缩放按钮弹出） ---------- */
+/* 与右键菜单同风格，单独一套 DOM，避免两者的显示/隐藏逻辑互相干扰。 */
+.zoom-menu {
+  position: absolute;
+  min-width: 132px;
+  background: var(--surface-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px var(--surface-shadow);
+  z-index: 21;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.zoom-menu.hidden {
+  display: none;
+}
+
+.zoom-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.zoom-menu li {
+  padding: 7px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.zoom-menu li:hover {
+  background: var(--hover-bg);
+}
+
+/* 当前档位：加粗 + 右侧一个对勾 */
+.zoom-menu li.active {
+  font-weight: 600;
+  color: var(--accent, var(--fg-app));
+}
+
+.zoom-menu li.active::after {
+  content: '✓';
+  font-size: 12px;
+}
+
+.zoom-menu li.divider {
+  height: 1px;
+  padding: 0;
+  margin: 4px 0;
+  background: var(--hover-bg-strong);
+  pointer-events: none;
+}
+
 /* ---------- 视频下载条目标记 ---------- */
 .dl-item.video .dl-name::before {
   content: '🎬 ';
@@ -1663,8 +1720,11 @@ body.transparent.frameless2 #frameless2-corners .br::before {
   border-bottom-width: var(--thick); border-right-width: var(--thick);
 }
 
-/* 描边层在主体之下（主体背景透明，只有 border 有像素），
-   保证白色主体压在深色描边之上，任意壁纸上都能看清。 */
+/* 描边层与主体的层叠关系（实测像素扫描得出，别再按字面猜）：
+   ::before 是 .corner 的**子内容**，按 CSS 层叠规则绘制在父元素边框**之上**，
+   并不是「在主体之下」。实测（DPR=1）tl 上边深色带 y ∈ [4.5, 7.4)，
+   正是描边层自身的边框范围，主体上边只在其下沿露出一点。
+   即：深色描边压住浅色主体，任意壁纸上都能看清（白色主体只起「补亮」作用）。 */
 
 /* ---------- 透明模式：外壳与网页背景透明，透出桌面 ---------- */
 /* 主进程已将窗口设为 transparent:true，普通模式下各部件自带不透明背景、外观不变；

@@ -34,6 +34,8 @@ const downloadsClearBtn = document.getElementById('downloads-clear');
 const dlBadge = document.getElementById('dl-badge');
 const settingsBtn = document.getElementById('settings');
 const zoomBtn = document.getElementById('zoom');
+const zoomMenu = document.getElementById('zoom-menu');
+const zoomMenuList = document.getElementById('zoom-menu-list');
 const settingsPanel = document.getElementById('settings-panel');
 const setThemeSel = document.getElementById('set-theme');
 const setHomeInput = document.getElementById('set-home');
@@ -190,6 +192,8 @@ function setActiveTab(id) {
   else hideFavicon();
   refreshBookmarkStar();
   updateZoomIndicator();
+  // 切标签后缩放菜单里的档位就不再对应当前标签了，直接收起。
+  hideZoomMenu();
   // 切换标签时清掉该页面残留的查找高亮（查找条处于关闭状态时）
   if (findBar.classList.contains('hidden')) stopFindOn(t.webview);
   // 擦除模式下切标签：把橡皮擦应用到新标签的页面，否则切过去就没反应
@@ -603,6 +607,13 @@ document.addEventListener('mousedown', (e) => {
   if (!contextMenu.classList.contains('hidden') && !contextMenu.contains(e.target)) {
     hideContextMenu();
   }
+  // 缩放菜单：点它自己或缩放按钮以外的地方都收起。
+  // 缩放按钮的 click 里也做了 stopPropagation，这里再挡一次，
+  // 避免「点按钮关菜单」与「点按钮开菜单」互相打架。
+  if (zoomMenu && !zoomMenu.classList.contains('hidden') &&
+      !zoomMenu.contains(e.target) && e.target !== zoomBtn) {
+    hideZoomMenu();
+  }
 });
 
 // 外壳区域（工具栏 / 收藏夹 / 标签栏 / 面板）右键也弹出无框模式菜单；
@@ -754,6 +765,18 @@ function wireWebview(tab) {
     }
   });
   // 透明模式：webview 就绪后按当前透明状态注入/保持页面背景透明 CSS
+  // 页面自身的缩放变化（Ctrl+滚轮等 Chromium 原生缩放）也要同步到按钮上。
+  //
+  // 原生缩放不经过应用，tab.zoomLevel 不会变，按钮会一直显示 100%，
+  // 而页面其实已经被放大 —— 用户看到「按钮显示 100%、页面却不是 100%」，
+  // 点按钮也只会重置应用自己的档位，状态始终对不上。
+  // 这里把 webview 报告的实际 level 同步回来，两者就一致了。
+  wv.addEventListener('zoom-changed', (e) => {
+    if (typeof e.zoomLevel !== 'number') return;
+    tab.zoomLevel = e.zoomLevel;
+    if (tab.id === activeTabId) updateZoomIndicator();
+  });
+
   wv.addEventListener('dom-ready', () => {
     if (isTransparent()) applyPageTransparent(wv, true);
     // 完全透明模式同理：页面导航后需重新注入「清掉所有元素背景」的 CSS，
@@ -2488,7 +2511,111 @@ function resetZoom() {
   rememberZoom(t);
 }
 
-zoomBtn.addEventListener('click', resetZoom);
+/**
+ * 缩放档位与百分比的换算。
+ *
+ * Electron 的 setZoomLevel(level) 里 level=0 表示 100%，实际倍数是 1.2^level。
+ * 现有实现一直用**整数**档位（Ctrl/Cmd + 加减号按 ±1 档走），
+ * 但整数档位只能落在 58% / 69% / 83% / 100% / 120% / 144% / 173% … 上，
+ * 这些数字不直观，做不出 Chrome 那样「50% / 75% / 125% / 150%」的菜单。
+ *
+ * 因此这里允许 level 取**浮点**：菜单给百分比，用 log 反算 level 即可精确命中。
+ * 数据模型没变（存的仍是 level），所以历史设置里已保存的 0 / 1 / 2 等旧值
+ * 依然表示 100% / 120% / 144%，**无需任何兼容处理**。
+ */
+const ZOOM_PERCENT_PRESETS = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200];
+
+/** 百分比 → Electron 的 zoom level */
+function levelForPercent(pct) {
+  return Math.log(pct / 100) / Math.log(1.2);
+}
+
+/** 当前的缩放百分比（取整显示用） */
+function currentZoomPercent(tab) {
+  const t = tab || activeTab();
+  return zoomPercent(t ? t.zoomLevel || 0 : 0);
+}
+
+/** 按百分比设置缩放。 */
+function setZoomPercent(pct) {
+  const t = activeTab();
+  if (!t) return;
+  t.zoomLevel = levelForPercent(pct);
+  applyZoomToTab(t);
+  rememberZoom(t);
+}
+
+/** 隐藏缩放菜单。 */
+function hideZoomMenu() {
+  if (zoomMenu) zoomMenu.classList.add('hidden');
+}
+
+/**
+ * 显示缩放菜单（点缩放按钮）。
+ *
+ * 【为什么要菜单而不是「点击直接重置」】
+ * 原实现是点一下就重置到 100%。但按钮上显示的是百分比，
+ * 用户的直觉是「点这里选缩放比例」（Chrome / Edge 都是这样），
+ * 结果点下去毫无变化 —— 页面本来就是 100% 时尤其明显，
+ * 表现为「这个按钮无效」。
+ */
+function showZoomMenu() {
+  if (!zoomMenu || !zoomMenuList) return;
+  const t = activeTab();
+  if (!t) return;
+  zoomMenuList.innerHTML = '';
+
+  const cur = currentZoomPercent(t);
+
+  function item(label, pct, action) {
+    const li = document.createElement('li');
+    li.textContent = label;
+    // 当前档位高亮（容差 1%，吸收取整误差）
+    if (pct != null && Math.abs(pct - cur) <= 1) li.classList.add('active');
+    li.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try {
+        action();
+      } catch (_) {
+        /* ignore */
+      }
+      hideZoomMenu();
+    });
+    zoomMenuList.appendChild(li);
+  }
+
+  function divider() {
+    const li = document.createElement('li');
+    li.className = 'divider';
+    zoomMenuList.appendChild(li);
+  }
+
+  ZOOM_PERCENT_PRESETS.forEach((pct) => {
+    item(pct + '%', pct, () => setZoomPercent(pct));
+  });
+  divider();
+  item('恢复默认', 100, resetZoom);
+
+  // 定位到按钮下方；靠近屏幕底部时改为向上弹
+  zoomMenu.classList.remove('hidden');
+  const r = zoomBtn.getBoundingClientRect();
+  const mh = zoomMenu.offsetHeight;
+  const below = r.bottom + mh + 6 <= window.innerHeight;
+  zoomMenu.style.left = Math.round(r.left) + 'px';
+  zoomMenu.style.top = below
+    ? Math.round(r.bottom + 4) + 'px'
+    : Math.round(r.top - mh - 4) + 'px';
+}
+
+/** 缩放按钮：点击开菜单；再次点击（菜单已开）则收起。 */
+zoomBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (zoomMenu && !zoomMenu.classList.contains('hidden')) {
+    hideZoomMenu();
+    return;
+  }
+  showZoomMenu();
+});
 
 // ---------- 初始化 ----------
 applyTheme(); // index.html 的引导脚本已抢先套用一次，这里补齐下拉框等 UI 状态
@@ -2582,6 +2709,13 @@ document.addEventListener('keydown', (e) => {
 // Esc：仅在无框模式（含模式2）下退出（普通浏览的 Esc 仍用于关闭查找条等，不受影响）
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  // 缩放菜单开着时，Esc 先关菜单 —— 菜单是当前最上层的浮层，
+  // 不该被无框模式的退出抢走。
+  if (zoomMenu && !zoomMenu.classList.contains('hidden')) {
+    e.preventDefault();
+    hideZoomMenu();
+    return;
+  }
   if (isFrameless2()) exitFrameless2();
   else if (document.body.classList.contains('frameless')) applyFrameless(false);
 });

@@ -81,16 +81,25 @@ app.whenReady().then(async () => {
     return [buf[i + 2], buf[i + 1], buf[i], buf[i + 3]];
   };
   // 采样点从实际几何推导（直角尺寸可调，写死坐标会在改尺寸后采空）：
-  //   onEdge = 上边中点（应为深色描边）
+  //   onEdge = 描边层独有的外沿（应为深色描边）
   //   pastH  = 沿上边方向、越过角标末端（应为背景，证明不是方框）
   //   pastV  = 沿左边方向、越过角标末端（同上）
+  //
+  // 【为什么 onEdge 取 insetY】
+  // 透明模式下直角是「深色描边层 + 浅色主体」双层结构。
+  // 关键事实（实测像素扫描得出）：描边层(::before) 是 .corner 的**子内容**，
+  // 按 CSS 层叠规则绘制在父元素**边框之上** —— 并不是 styles.css 注释里
+  // 曾经以为的「在主体之下」。
+  // 实测（DPR=1，H=700，x=10.33）：tl 上边深色带 y ∈ [4.5, 7.4)，
+  // 即描边层的边框本身；insetY(=6) 落在其中。
+  // 取 insetY + THICK/2 则会越过描边层，落到主体的浅色上。
   const insetX = lastGeo.tl.rect[0], insetY = lastGeo.tl.rect[1];
   const L = lastGeo.tl.len, TH = lastGeo.tl.bd.top;
-  const onEdge = read(insetX + L / 2, insetY + TH / 2);
+  const onEdge = read(insetX + L / 2, insetY);
   const pastH = read(insetX + L + TH + 10, insetY + TH / 2);
   const pastV = read(insetX + TH / 2, insetY + L + TH + 10);
   log.push(['采样点 onEdge/pastH/pastV',
-    [insetX + L / 2, insetY + TH / 2] + ' / ' +
+    [insetX + L / 2, insetY] + ' / ' +
     [insetX + L + TH + 10, insetY + TH / 2] + ' / ' +
     [insetX + TH / 2, insetY + L + TH + 10] + '（DPR=' + SCALE + '）']);
   log.push(['像素 tl 上边', JSON.stringify(onEdge)]);
