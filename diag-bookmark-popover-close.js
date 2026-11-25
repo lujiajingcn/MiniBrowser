@@ -65,10 +65,14 @@ app.whenReady().then(async () => {
     );
 
   // 准备一个确定的收藏环境：清空书签、设一个已知 URL
+  // 用**带时间戳的唯一 URL** —— renderer.js 的 getBookmarks() 有模块级内存缓存
+  // _bmRoot，清了 localStorage 也不会立刻清掉它；用固定 URL 会与上一次运行
+  // 残留的收藏撞上（表现为「该地址已在收藏夹中」而不是「已收藏到…」）。
+  const TEST_URL = 'https://example.com/test-page-' + Date.now();
   await wc.executeJavaScript(`
     (() => {
       try { localStorage.removeItem('mb_bookmarks'); } catch (e) {}
-      document.getElementById('url').value = 'https://example.com/test-page';
+      document.getElementById('url').value = ${JSON.stringify(TEST_URL)};
     })();
   `);
   await wait(300);
@@ -122,7 +126,7 @@ app.whenReady().then(async () => {
     })();
   `);
   log.push(['场景2 书签已持久化', tree ? '是' : '否']);
-  exp(tree.indexOf('https://example.com/test-page') >= 0,
+  exp(tree.indexOf(TEST_URL) >= 0,
     '场景2：书签数据应包含刚收藏的 URL');
 
   // ---- 场景 3：星星图标应变为「已收藏」 ----
@@ -160,7 +164,7 @@ app.whenReady().then(async () => {
   // 因此这里必须先换一个**未收藏**的 URL，才能走到「⭐ 收藏到此文件夹」分支。
   await wc.executeJavaScript(`
     (() => {
-      document.getElementById('url').value = 'https://example.com/never-saved-page';
+      document.getElementById('url').value = 'https://example.com/never-saved-page-' + Date.now();
     })();
   `);
   await wc.executeJavaScript(`document.querySelector('.bookmark.manage').click();`);

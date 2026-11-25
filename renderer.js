@@ -709,10 +709,15 @@ function wireWebview(tab) {
       return;
     }
     if (e.channel === 'mb-page-pointer-down') {
-      // 网页内容区左键点击 → 关闭右键菜单。
-      // 必须在 mousedown 阶段就关掉：菜单是高层 UI，若等 click（mouseup 之后）
-      // 才消失，视觉上会「点下去菜单还在、松手才消失」。
+      // 网页内容区左键点击 → 关闭浮层。
+      // 必须在 mousedown 阶段就关掉：浮层是高层 UI，若等 click（mouseup 之后）
+      // 才消失，视觉上会「点下去浮层还在、松手才消失」。
       hideContextMenu();
+      // 收藏夹弹层同理：它原本只在**外壳 document** 上监听 click，
+      // 而 <webview> 是独立 guest 进程，网页内的点击不会冒泡到外壳 document，
+      // 表现为「点网页内容区，收藏弹层不消失」。
+      // 与右键菜单共用这个通道，两者都是「点外部关闭」的浮层。
+      closeBookmarksPopover();
       return;
     }
     if (e.channel === 'mb-context-menu') {
@@ -1328,8 +1333,14 @@ if (bmCloseBtn) {
     closeBookmarksPopover();
   });
 }
-// 点击弹出层外部关闭
-document.addEventListener('click', (e) => {
+// 点击弹出层外部关闭。
+// 用 mousedown 而非 click：弹出层是浮在页面之上的高层 UI，
+// 等到 click（mouseup 之后）才消失的话，视觉上会「按下去浮层还在、松手才消失」。
+//
+// 注意：这里只覆盖**外壳区域**（工具栏/收藏夹栏/标签栏/面板）的点击。
+// 网页内容区在独立的 guest 进程里，其点击不冒泡到外壳 document，
+// 由 webview-preload 检测后经 mb-page-pointer-down 通道转发处理。
+document.addEventListener('mousedown', (e) => {
   if (!bmPopover.classList.contains('hidden') && !bmPopover.contains(e.target)) {
     closeBookmarksPopover();
   }
