@@ -756,3 +756,122 @@ setTimeout(() => {
 
 // 外壳主动询问当前页面视频源（工具栏「下载视频」按钮触发）
 ipcRenderer.on('mb-request-videos', () => reportVideos());
+
+// ---------- 去粗体：穿透同源 iframe ----------
+//
+// 宿主的 insertCSS 是**浏览器侧** API，只作用于**主文档**，
+// 同源 iframe 里的粗体它管不到（iframe 是独立的文档）。
+// 这里由宿主通过 mb-debold-frames 下发开关，本 preload 遍历
+// accessibleDocuments()（主文档 + 同源 iframe 递归 + shadow root 里的 iframe），
+// 给每个**子文档**插入/移除一个 <style>。
+//
+// 主文档不在这里处理：宿主那边已用 insertCSS 处理过，
+// 那是浏览器侧 API，**不依赖 preload 是否加载成功**，比这条 IPC 通道可靠。
+
+const DEBOLD_FRAME_CSS = `
+*, *::before, *::after {
+  font-weight: normal !important;
+}`;
+const DEBOLD_STYLE_ID = 'mb-debold-style';
+
+let deboldEnabled = false;
+// 已绑定 load 监听的 frame，避免重复绑定
+const deboldBoundFrames = new WeakSet();
+// 延迟重试的定时器（iframe 加载完成时刻不可控）
+let deboldRetryTimers = [];
+
+/** 给某个文档创建（或复用）承载去粗体样式的 <style>。 */
+function deboldStyleFor(doc) {
+  let el = doc.getElementById(DEBOLD_STYLE_ID);
+  if (!el) {
+    el = doc.createElement('style');
+    el.id = DEBOLD_STYLE_ID;
+    (doc.head || doc.documentElement).appendChild(el);
+  }
+  return el;
+}
+
+/**
+ * 给文档内的 iframe 绑定 load 监听。
+ *
+ * iframe 可能在样式注入**之后**才加载完成 —— 那时新文档里没有我们的
+ * <style>，粗体又回来了。绑定 load 后在加载完成的瞬间补注入一次。
+ */
+function bindFrameLoads(doc) {
+  let frames = null;
+  try {
+    frames = doc.querySelectorAll('iframe, frame');
+  } catch (_) {
+    return;
+  }
+  for (let i = 0; i < frames.length; i++) {
+    const f = frames[i];
+    if (!f || deboldBoundFrames.has(f)) continue;
+    deboldBoundFrames.add(f);
+    try {
+      f.addEventListener('load', () => {
+        if (deboldEnabled) injectDeboldNow();
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+/** 立即对所有可访问的**子文档**注入/移除去粗体样式。 */
+function injectDeboldNow() {
+  const docs = accessibleDocuments();
+  for (let i = 0; i < docs.length; i++) {
+    const doc = docs[i];
+    if (!doc || doc === document) continue; // 主文档交给宿主的 insertCSS
+    try {
+      if (deboldEnabled) {
+        const el = deboldStyleFor(doc);
+        if (el.textContent !== DEBOLD_FRAME_CSS) el.textContent = DEBOLD_FRAME_CSS;
+        bindFrameLoads(doc);
+      } else {
+        const el = doc.getElementById(DEBOLD_STYLE_ID);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      }
+    } catch (_) {
+      /* 跨域 / 已销毁的文档，忽略 */
+    }
+  }
+}
+
+function clearDeboldRetries() {
+  for (let i = 0; i < deboldRetryTimers.length; i++) clearTimeout(deboldRetryTimers[i]);
+  deboldRetryTimers = [];
+}
+
+/**
+ * 设置去粗体开关。
+ * @param {boolean} on 是否开启
+ */
+function applyDeboldToFrames(on) {
+  deboldEnabled = !!on;
+  clearDeboldRetries();
+  injectDeboldNow();
+  if (!on) return;
+  // iframe 的加载完成时刻不可控：宿主发出开关时，iframe 可能还在加载，
+  // 此刻遍历到的只是它的初始空文档，真正的文档加载完成后并没有我们的 style。
+  // load 监听只能覆盖「绑定之后才加载」的情况，而绑定时 iframe 可能已经加载完了
+  // —— 所以再安排几次延迟重试兜住各种时序。
+  const delays = [300, 1000, 2500];
+  for (let i = 0; i < delays.length; i++) {
+    deboldRetryTimers.push(setTimeout(() => {
+      if (deboldEnabled) injectDeboldNow();
+    }, delays[i]));
+  }
+}
+
+// 宿主下发去粗体开关（工具栏「去粗体」按钮）
+ipcRenderer.on('mb-debold-frames', (_e, payload) => {
+  const on = !!(payload && payload.on);
+  try {
+    applyDeboldToFrames(on);
+  } catch (_) {
+    /* ignore */
+  }
+});
+

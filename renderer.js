@@ -540,7 +540,17 @@ function applyPageFullTransparent(webview, on, force) {
  *    （force=true 时旧的 key 已随导航失效，直接丢弃重注入。）
  */
 function applyPageDebold(webview, on, force) {
+  // 主文档：insertCSS（浏览器侧 API，不依赖 preload 是否加载成功）
   setInjectedCss(webview, 'debold', DEBOLD_PAGE_CSS, on, force);
+  // 同源 iframe：insertCSS 管不到（iframe 是独立文档），
+  // 由 preload 遍历 accessibleDocuments 补注入。
+  try {
+    if (webview && typeof webview.send === 'function') {
+      webview.send('mb-debold-frames', { on: !!on });
+    }
+  } catch (_) {
+    /* preload 尚未就绪时会失败，dom-ready 时会补发 */
+  }
 }
 
 function applyTransparent(on) {
@@ -847,6 +857,10 @@ function wireWebview(tab) {
 
   wv.addEventListener('dom-ready', () => {
     if (isTransparent()) applyPageTransparent(wv, true);
+    // 去粗体：preload 此刻才刚就绪，之前发的 mb-debold-frames 消息它听不到
+    // （webview.send 在 preload 加载完成前发出会丢失），这里补发一次。
+    // 用 force=true 让主文档的 insertCSS 也重新注入一遍 —— 导航会清掉旧样式。
+    if (tab.debold) applyPageDebold(wv, true, true);
     // 完全透明模式同理：页面导航后需重新注入「清掉所有元素背景」的 CSS，
     // 否则表现为「刷新后退回普通透明模式」。
     if (isFullTransparent()) applyPageFullTransparent(wv, true);

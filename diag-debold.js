@@ -67,6 +67,30 @@ app.whenReady().then(async () => {
     })();
   `);
 
+  /** 读同源 iframe 内的计算字重（insertCSS 管不到 iframe，必须单独验证）。 */
+  const frameWeights = () => wc.executeJavaScript(`
+    (() => {
+      const t = activeTab();
+      return t.webview.executeJavaScript(\`
+        (() => {
+          const fr = document.getElementById('frame1');
+          let fd = null;
+          try { fd = fr && fr.contentDocument; } catch (e) { fd = null; }
+          if (!fd) return JSON.stringify({ err: 'no-frame-doc' });
+          const fg = id => {
+            const el = fd.getElementById(id);
+            return el ? getComputedStyle(el).fontWeight : 'missing';
+          };
+          return JSON.stringify({
+            fb: fg('fb'), fs: fg('fs'), fh: fg('fh'),
+            ffw: fg('ffw'), fbc: fg('fbc'), fnorm: fg('fnorm'),
+            hasStyle: !!fd.getElementById('mb-debold-style'),
+          });
+        })();
+      \`);
+    })();
+  `);
+
   const btnState = () => wc.executeJavaScript(`
     (() => {
       const b = document.getElementById('debold');
@@ -102,6 +126,18 @@ app.whenReady().then(async () => {
   exp(w1.b6 === '400', '场景B：font-weight:600 应变为常规，实际 ' + w1.b6);
   exp(w1.norm === '400', '场景C：普通文字应保持 400，实际 ' + w1.norm);
 
+  // ---------- B2. 同源 iframe 内的粗体同样要去掉 ----------
+  let f1 = JSON.parse(await frameWeights());
+  log.push(['iframe 字重', JSON.stringify(f1)]);
+  exp(f1.err === undefined, '场景B2：应能读到 iframe 文档，实际 ' + f1.err);
+  exp(f1.hasStyle === true, '场景B2：iframe 内应已插入 style 元素，实际 ' + f1.hasStyle);
+  exp(f1.fb === '400', '场景B2：iframe 内 <b> 应变为常规，实际 ' + f1.fb);
+  exp(f1.fs === '400', '场景B2：iframe 内 <strong> 应变为常规，实际 ' + f1.fs);
+  exp(f1.fh === '400', '场景B2：iframe 内 <h2> 应变为常规，实际 ' + f1.fh);
+  exp(f1.ffw === '400', '场景B2：iframe 内联 700 应变为常规，实际 ' + f1.ffw);
+  exp(f1.fbc === '400', '场景B2：iframe class 粗体应变为常规，实际 ' + f1.fbc);
+  exp(f1.fnorm === '400', '场景B2：iframe 普通文字应保持 400，实际 ' + f1.fnorm);
+
   // ---------- D. 再次点击恢复 ----------
   await wc.executeJavaScript(`document.getElementById('debold').click();`);
   await wait(900);
@@ -112,6 +148,10 @@ app.whenReady().then(async () => {
   exp(b2.pressed === 'false', '场景D：再次点击后 aria-pressed 应回到 false');
   exp(w2.b === '700', '场景D：<b> 应恢复粗体，实际 ' + w2.b);
   exp(w2.h1 === '700', '场景D：<h1> 应恢复粗体，实际 ' + w2.h1);
+  let f2 = JSON.parse(await frameWeights());
+  log.push(['恢复后 iframe 字重', JSON.stringify(f2)]);
+  exp(f2.fb === '700', '场景D：iframe 内 <b> 应恢复粗体，实际 ' + f2.fb);
+  exp(f2.hasStyle === false, '场景D：iframe 内的 style 元素应被移除，实际 ' + f2.hasStyle);
 
   // ---------- F. 导航后仍生效 ----------
   // 重新开启去粗体，然后让页面导航 —— insertCSS 的样式会被导航清除，
@@ -129,6 +169,9 @@ app.whenReady().then(async () => {
   log.push(['导航后 字重', JSON.stringify(w3)]);
   exp(w3.b === '400', '场景F：导航后 <b> 仍应去粗体，实际 ' + w3.b);
   exp(w3.h1 === '400', '场景F：导航后 <h1> 仍应去粗体，实际 ' + w3.h1);
+  let f3 = JSON.parse(await frameWeights());
+  log.push(['导航后 iframe 字重', JSON.stringify(f3)]);
+  exp(f3.fb === '400', '场景F：导航后 iframe 内 <b> 仍应去粗体，实际 ' + f3.fb);
 
   // ---------- E. 切标签状态独立 ----------
   const tabState = await wc.executeJavaScript(`

@@ -112,7 +112,14 @@ function main() {
   }
 
   const current = target.slice(startIdx, endIdx + END.length);
-  if (current === block) {
+  // 比较时归一化行尾。
+  //
+  // 仓库里存的是 LF，但本机 git 的 core.autocrlf=true，
+  // checkout 时工作区文件会变成 CRLF —— 于是严格字符串比较会因为
+  // 行尾不同而误判「不同步」，任何人在干净 clone 后跑 lint 都会失败。
+  // 这里只归一化**行尾**，内容仍要求完全一致。
+  const normalizeEol = (s) => s.replace(/\r\n/g, '\n');
+  if (normalizeEol(current) === normalizeEol(block)) {
     console.log('[inline] 已同步，无需改动');
     return;
   }
@@ -122,7 +129,8 @@ function main() {
   }
   console.log('[inline] 更新内联块...');
   const next = target.slice(0, startIdx) + block + target.slice(endIdx + END.length);
-  fs.writeFileSync(TARGET, next, 'utf8');
+  // 写入时沿用目标文件当前的行尾风格，避免同一文件里混着 LF 和 CRLF。
+  fs.writeFileSync(TARGET, target.includes('\r\n') ? next.replace(/\r?\n/g, '\r\n') : next, 'utf8');
   console.log('[inline] 已更新');
 }
 
