@@ -1503,7 +1503,7 @@ body.frameless2 #frameless2-corners {
    2) box-sizing: content-box —— 全局有 * { box-sizing: border-box }（styles.css:136）。
       border-box 下 width/height 含边框，26px 会被 3px 边框挤掉。 */
 #frameless2-corners .corner {
-  --len: 26px; /* 直角的两条边长度 */
+  --len: calc(26px / 3); /* 直角的两条边长度（原 26px，改为三分之一 ≈ 8.67px） */
   --thick: 3px; /* 描边粗细 */
   display: block; /* 见上方说明：<i> 默认 inline，尺寸与定位都会失效 */
   box-sizing: content-box; /* 见上方说明：不能继承全局的 border-box */

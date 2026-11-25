@@ -154,16 +154,57 @@ async function run() {
   const isDark = (p) => p && (p[0] + p[1] + p[2]) / 3 < 140;
 
   // 各角的「两条边中点」与「两条空缺边的外侧点」
-  // 主体在 6px 内缩、26px 长、3px 粗：
-  //   tl: 上边中点 (19,7)   左/右空缺 → 右外(45,7)、下外(7,45)
-  //   tr: 上边中点 (981,7)  左外(955,7)、下外(993,45)
-  //   bl: 下边中点 (19,693) 上外(7,655)、右外(45,693)
-  //   br: 下边中点 (981,693) 上外(993,655)、左外(955,693)
+  //
+  // 几何参数**从实际渲染结果读取**（styles.css 的 --len / --thick 与 6px 内缩），
+  // 不写死坐标 —— 直角尺寸是可调的（--len 目前是 26px 的三分之一），
+  // 写死坐标会让本验证在改尺寸后整体采空、形同虚设。
+  //
+  // 测量口径的坑（都实测踩过）：
+  //  1) getPropertyValue('--len') 返回**未计算的文本**（calc(26px / 3)），
+  //     parseFloat 会得到 NaN —— 要用 getComputedStyle().width。
+  //  2) getBoundingClientRect() 返回的是 **border-box** 尺寸
+  //     （不管 box-sizing 如何），不能当边长用。
+  //  3) border-width 会被 Chromium **设备像素对齐**：DPR=1.5 时 3px 边框
+  //     = 4.5 物理像素，被取整到 4 物理像素 = 2.667 CSS px。
+  //     故测到的 thick 未必等于声明值，这是既有行为，与尺寸调整无关。
+  const geo = await wc.executeJavaScript(`
+    (() => {
+      const el = document.querySelector('#frameless2-corners .tl');
+      const cs = getComputedStyle(el);
+      return JSON.stringify({
+        // 注意 1：--len 的声明值是 calc(26px / 3)，getPropertyValue 返回的是
+        //         **未计算的文本**，parseFloat 会得到 NaN。
+        // 注意 2：getBoundingClientRect() 返回的是 **border-box** 尺寸
+        //         （不管 box-sizing 如何），不能当作边长用。
+        // 因此边长取 getComputedStyle().width —— 对 box-sizing:content-box
+        // 的元素它就是 content 宽度，正好等于 --len。
+        len: parseFloat(cs.width),
+        thick: parseFloat(cs.borderTopWidth),
+        inset: parseFloat(cs.left), // tl 贴左边，left 即内缩距离
+        outline: 1, // 描边层(::before)比主体向外扩 1px
+      });
+    })();
+  `);
+  const G = JSON.parse(geo);
+  const { len: LEN, thick: THICK, inset: INSET, outline: OUT } = G;
+  log.push(['几何参数', 'len=' + LEN + ' thick=' + THICK + ' inset=' + INSET]);
+
+  // 主体两条边的覆盖范围（CSS 坐标）：
+  //   上边：x ∈ [INSET, INSET+LEN]，y ∈ [INSET, INSET+THICK]
+  //   左边：x ∈ [INSET, INSET+THICK]，y ∈ [INSET, INSET+LEN]
+  // 描边层向外扩 OUT px，所以最外沿到 INSET-OUT。
+  // 采样点：
+  //   edge  = 有描边那条边的中点（应为深色）
+  //   off1/2 = 两条**空缺**边的外侧（应为背景，证明不是完整方框）
+  //         沿空缺边方向再往里推 INSET+LEN+THICK+2，确保明确落在角标之外，
+  //         但仍贴着该边的延长线，避免采到别的元素。
+  const mid = INSET + LEN / 2;
+  const out1 = INSET + LEN + THICK + 2; // 沿边方向、角标之外
   const probes = {
-    tl: { edge: [19, 7], off1: [45, 7], off2: [7, 45] },
-    tr: { edge: [981, 7], off1: [955, 7], off2: [993, 45] },
-    bl: { edge: [19, 693], off1: [7, 655], off2: [45, 693] },
-    br: { edge: [981, 693], off1: [993, 655], off2: [955, 693] },
+    tl: { edge: [mid, INSET + THICK / 2], off1: [out1, INSET + THICK / 2], off2: [INSET + THICK / 2, out1] },
+    tr: { edge: [W - INSET - LEN / 2, INSET + THICK / 2], off1: [W - out1, INSET + THICK / 2], off2: [W - INSET - THICK / 2, out1] },
+    bl: { edge: [mid, H - INSET - THICK / 2], off1: [INSET + THICK / 2, H - out1], off2: [out1, H - INSET - THICK / 2] },
+    br: { edge: [W - INSET - LEN / 2, H - INSET - THICK / 2], off1: [W - out1, H - INSET - THICK / 2], off2: [W - INSET - THICK / 2, H - out1] },
   };
   for (const [c, p] of Object.entries(probes)) {
     const e = read(p.edge[0], p.edge[1]);
