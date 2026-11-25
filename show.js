@@ -7,6 +7,7 @@
 // 注意：此命令是“重新显示窗口”的唯一途径（隐藏后界面不会出现在任务栏，只能靠它恢复）。
 
 const net = require('node:net');
+const { writeLine } = require('./console-encoding');
 
 const PORT = 39321;
 const HOST = '127.0.0.1';
@@ -24,13 +25,13 @@ sock.on('data', (chunk) => {
 
 sock.on('close', () => {
   if (resp.trim() === 'ok') {
-    console.log('已发送显示命令，MiniBrowser 窗口即将恢复。');
+    writeLine('已发送显示命令，MiniBrowser 窗口即将恢复。');
   } else {
-    console.log('未能恢复窗口：MiniBrowser 服务未运行（应用可能未启动或已退出）。');
+    writeLine('未能恢复窗口：MiniBrowser 服务未运行（应用可能未启动或已退出）。');
   }
 });
 
 sock.on('error', () => {
-  console.log('连接失败：MiniBrowser 服务未运行或端口被占用（请确认应用正在运行）。');
+  writeLine('连接失败：MiniBrowser 服务未运行或端口被占用（请确认应用正在运行）。');
   process.exit(1);
 });

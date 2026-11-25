@@ -22,6 +22,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { writeErrLine } = require('./console-encoding');
 
 const ROOT = __dirname;
 const QUIET = process.env.MB_START_QUIET === '1';
@@ -50,7 +51,7 @@ function resolveElectron() {
 function main() {
   const electron = resolveElectron();
   if (!electron) {
-    console.error('[start] 找不到 electron 可执行文件，请先执行 npm install');
+    writeErrLine('[start] 找不到 electron 可执行文件，请先执行 npm install');
     process.exit(1);
   }
 
@@ -73,7 +74,7 @@ function main() {
   });
 
   child.on('error', (e) => {
-    console.error('[start] 启动失败：', e && e.message);
+    writeErrLine('[start] 启动失败：', e && e.message);
     process.exit(1);
   });
 

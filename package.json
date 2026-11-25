@@ -79,5 +79,8 @@
     "portable": {
       "artifactName": "MiniBrowser-${version}-portable.${ext}"
     }
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
   }
 }

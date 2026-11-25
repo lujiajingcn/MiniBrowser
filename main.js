@@ -54,7 +54,7 @@ if (process.env.ELECTRON_RUN_AS_NODE === '1') {
     process.exit(0);
   } catch (e) {
     // 拉起失败时只能提示（此时已无 Electron API 可用）
-    console.error('[main] 清除 ELECTRON_RUN_AS_NODE 后重新启动失败：', e && e.message);
+    writeErrLine('[main] 清除 ELECTRON_RUN_AS_NODE 后重新启动失败：', e && e.message);
     process.exit(1);
   }
 }
@@ -69,6 +69,7 @@ const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
 const { setupSavePage } = require('./save-page');
 const { buildNetscapeBookmarks } = require('./bookmarks-io');
+const { writeLine, writeErrLine } = require('./console-encoding');
 const { setupWindowDrag } = require('./window-drag');
 
 /**
@@ -254,10 +255,11 @@ function setupShowServer() {
   });
   server.on('error', (e) => {
     // 端口被占用（例如多个实例）/ 权限不足：打印告警但不阻断主流程
-    console.error('[show-server] 启动失败：', e && e.message ? e.message : e);
+    writeErrLine('[show-server] 启动失败：', e && e.message ? e.message : e);
   });
   server.listen(SHOW_PORT, SHOW_HOST, () => {
-    console.log('[show-server] 已启动，监听 ' + SHOW_HOST + ':' + SHOW_PORT + '（用时运行 show.js 恢复窗口）');
+    writeLine('[show-server] 已启动，监听 ' + SHOW_HOST + ':' + SHOW_PORT +
+      '（用时运行 show.js 恢复窗口）');
   });
 }
 
