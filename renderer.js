@@ -726,6 +726,11 @@ function showPageContextMenu(x, y) {
     const wv = activeWebview();
     if (wv) wv.goForward();
   });
+  item('关闭当前标签页', () => {
+    // 与 Ctrl+W 走同一条路径：会记录到「最近关闭」、恢复相邻标签，
+    // 且关掉最后一个标签时自动补一个首页标签，不会留下空窗口。
+    if (activeTabId) closeTab(activeTabId);
+  });
   divider();
   item('开发者工具', () => {
     const wv = activeWebview();

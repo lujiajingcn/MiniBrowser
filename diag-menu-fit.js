@@ -60,7 +60,8 @@ app.whenReady().then(async () => {
       // 通用页面菜单：复刻 renderer.js 里 showPageContextMenu 的项数
       list.innerHTML = '';
       const labels = ['进入无框模式','进入无框模式2','进入透明模式','进入完全透明模式',
-                     '-','刷新','后退','前进','-','开发者工具','-','最小化窗口','关闭窗口','隐藏窗口'];
+                     '-','刷新','后退','前进','关闭当前标签页','-','开发者工具',
+                     '-','最小化窗口','关闭窗口','隐藏窗口'];
       labels.forEach(t => {
         const li = document.createElement('li');
         if (t === '-') li.className = 'divider'; else li.textContent = t;
