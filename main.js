@@ -1,6 +1,45 @@
 'use strict';
 
 /**
+ * ---------- 崩溃诊断 ----------
+ *
+ * 打包版是 GUI 程序：未捕获的异常只会弹一个原生 Error 对话框，
+ * stderr / stdout 都看不到（也没有终端可看），
+ * 于是「双击后窗口一闪就没了」这类问题**完全无从排查**。
+ *
+ * 这里把未捕获异常与未处理的 Promise 拒绝写进
+ * %TEMP%\minibrowser-start-error.log，至少留下堆栈。
+ */
+(function installCrashLogging() {
+  const LOG = (() => {
+    try {
+      return require('node:path').join(require('node:os').tmpdir(), 'minibrowser-start-error.log');
+    } catch (_) {
+      return null;
+    }
+  })();
+  const dump = (kind, detail) => {
+    if (!LOG) return;
+    try {
+      require('node:fs').appendFileSync(LOG,
+        '[' + kind + '] ' + detail + '\r\n');
+    } catch (_) {
+      /* ignore */
+    }
+  };
+  process.on('uncaughtException', (err) => {
+    dump('uncaughtException', (err && err.stack) || String(err));
+    // 记录后退出：带着不确定的状态继续跑更容易掩盖问题。
+    // 这里不用 app.quit() —— 此刻 app 可能还没 ready。
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    dump('unhandledRejection',
+      (reason && reason.stack) || (reason && reason.message) || String(reason));
+  });
+})();
+
+/**
  * ---------- 环境自愈：ELECTRON_RUN_AS_NODE ----------
  *
  * 某些开发环境（嵌在别的 Electron 应用里跑、被 IDE/CI 包装过的终端）
