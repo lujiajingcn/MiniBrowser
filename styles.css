@@ -489,6 +489,15 @@ body {
   margin-left: 2px;
 }
 
+/* 收藏夹栏里的站点图标 */
+.bookmark .bm-bar-favicon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+  object-fit: contain;
+}
+
 .bookmark .bm-del:hover {
   color: var(--danger);
 }

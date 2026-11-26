@@ -109,6 +109,12 @@ app.whenReady().then(async () => {
         return JSON.stringify(imgs.map(function (i) { return i.getAttribute('src'); }));
       });
 
+      step('queryBarImg', function () {
+        renderBookmarks();
+        var imgs = Array.from(document.querySelectorAll('#bookmarks-bar img.bm-bar-favicon'));
+        return JSON.stringify(imgs.map(function (i) { return i.getAttribute('src'); }));
+      });
+
       step('export', function () {
         var html = window.BookmarksIO.buildNetscapeBookmarks(getBookmarks(), 'Bookmarks');
         var line = (html.split('\\n').filter(function (l) {
@@ -146,6 +152,34 @@ app.whenReady().then(async () => {
   // ---------- C. 老书签（无 icon）猜 /favicon.ico ----------
   exp(rendered.some((r) => r && r === 'https://example.com/favicon.ico'),
     '场景C：无 icon 的老书签应猜 /favicon.ico，实际 ' + JSON.stringify(rendered));
+
+  // ---------- F. 收藏夹栏也显示图标 ----------
+  const barImgs = JSON.parse(phase1.queryBarImg.v);
+  log.push(['收藏夹栏图标', JSON.stringify(barImgs)]);
+  exp(barImgs.length > 0, '场景F：收藏夹栏应渲染出图标');
+  exp(barImgs.some((r) => r && r.indexOf('favicon.ico') >= 0),
+    '场景F：收藏夹栏图标 src 应指向 favicon，实际 ' + JSON.stringify(barImgs));
+  // 收藏夹栏的条目应包含图标 + 标题两部分
+  const barStruct = await wc.executeJavaScript(`
+    (function () {
+      var items = Array.from(document.querySelectorAll('#bookmarks-bar .bookmark'));
+      var withIcon = items.filter(function (it) {
+        return !!it.querySelector('img.bm-bar-favicon');
+      })[0];
+      if (!withIcon) return JSON.stringify({ found: false });
+      return JSON.stringify({
+        found: true,
+        hasLabel: !!withIcon.querySelector('.bm-label'),
+        labelText: (withIcon.querySelector('.bm-label') || {}).textContent || '',
+        imgBeforeLabel: Array.prototype.indexOf.call(withIcon.children,
+          withIcon.querySelector('img.bm-bar-favicon')) === 0,
+      });
+    })();
+  `);
+  log.push(['栏条目结构', barStruct]);
+  const bs = JSON.parse(barStruct);
+  exp(bs.found && bs.hasLabel, '场景F：栏条目应同时有图标和标题');
+  exp(bs.found && bs.imgBeforeLabel, '场景F：图标应在标题之前');
 
   // ---------- E. 导出带 ICON ----------
   const exported = JSON.parse(phase1.export.v);

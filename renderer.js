@@ -1222,6 +1222,26 @@ function renderBookmarks() {
     item.className = 'bookmark';
     item.title = node.url;
 
+    // 收藏夹栏也显示站点图标（书签节点里的 icon 字段，
+    // 老书签没有就按站点约定猜 /favicon.ico）。
+    // 与收藏夹面板的区别：栏里空间紧凑，加载失败就**直接隐藏图标**，
+    // 不像面板那样回退成 🔗 文字。
+    const iconSrc = node.icon || guessFaviconUrl(node.url);
+    if (iconSrc) {
+      const icon = document.createElement('img');
+      icon.className = 'bm-bar-favicon';
+      icon.alt = '';
+      icon.loading = 'lazy';
+      icon.addEventListener('error', () => icon.remove());
+      icon.src = iconSrc;
+      item.appendChild(icon);
+      // 超时兜底：请求被挂起时（代理拦截等）既不 error 也不 load，
+      // 图标会一直空着 —— 超时未完成就当失败处理。
+      setTimeout(() => {
+        if (icon.isConnected && !icon.complete) icon.remove();
+      }, 4000);
+    }
+
     const label = document.createElement('span');
     label.className = 'bm-label';
     label.textContent = node.title;
