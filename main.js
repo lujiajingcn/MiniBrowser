@@ -132,6 +132,21 @@ function createWindow(offscreen) {
     win.webContents.send('mb-pinned-changed', !!isOnTop);
   });
 
+  // 报告窗口已创建及其位置。
+  // 【为什么要有这一行】
+  // 「npm start 之后看不到窗口」是最常见的困惑：可能是窗口被隐藏了、
+  // 可能跑到屏幕外了、也可能压根没创建出来。
+  // 把实际 bounds 打出来，用户一眼就能判断是哪一种 ——
+  // 而不是对着黑屏猜。
+  try {
+    const b = win.getBounds();
+    writeLine('[main] 窗口已创建: ' + b.width + 'x' + b.height +
+      ' @ (' + b.x + ',' + b.y + ')' +
+      (win.isVisible() ? '' : '  [注意：当前不可见]'));
+  } catch (_) {
+    /* ignore */
+  }
+
   const args = parseLaunchArgs();
   if (args.autoDemo || args.captureOut) {
     runDemoSequence(win, args.captureOut);
@@ -297,15 +312,35 @@ if (!gotSingleInstanceLock) {
   // 用 process.exit 而不是 app.quit()：app.quit() 只是发起退出请求，
   // 下面的同步代码仍会继续执行（创建窗口、起端口服务），导致
   // 第二个实例照样抢端口与缓存。这里直接结束进程最干脆。
+  //
+  // 【为什么要打印这一行】
+  // 静默 exit(0) 会让「npm start」看起来像「什么都没发生」——
+  // 用户完全无从判断是已有实例在跑、还是启动失败了。
+  // 已有实例会收到 second-instance 事件并把窗口显示/聚焦出来，
+  // 所以这里明确告诉用户「发生了什么、接下来该看哪里」。
+  writeLine('[main] 已有实例在运行，本次启动退出；' +
+    '已请求已有实例显示窗口（若窗口仍不可见，可运行 node show.js 强制唤起）');
   process.exit(0);
 } else {
   app.on('second-instance', () => {
     // 第二次启动：把已有窗口全部显示出来并聚焦
+    let shown = 0;
     for (const w of BrowserWindow.getAllWindows()) {
       if (w.isMinimized()) w.restore();
+      // 窗口被「隐藏窗口」功能隐藏过（setSkipTaskbar(true) + hide()）时，
+      // 光 show() 还不够 —— 任务栏入口也要恢复，否则用户依然找不到它。
+      if (!w.isVisible()) {
+        try {
+          w.setSkipTaskbar(false);
+        } catch (_) {
+          /* ignore */
+        }
+      }
       w.show();
       w.focus();
+      shown++;
     }
+    if (shown) writeLine('[main] 已有实例已显示窗口');
   });
 }
 

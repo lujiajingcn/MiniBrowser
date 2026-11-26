@@ -22,7 +22,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const { writeErrLine } = require('./console-encoding');
+const { writeLine, writeErrLine } = require('./console-encoding');
 
 const ROOT = __dirname;
 const QUIET = process.env.MB_START_QUIET === '1';
@@ -54,6 +54,26 @@ function main() {
     writeErrLine('[start] 找不到 electron 可执行文件，请先执行 npm install');
     process.exit(1);
   }
+  // 二次校验：路径必须存在**且是一个文件**。
+  //
+  // 【为什么要加这层】
+  // 只判 existsSync 是不够的 —— 如果拿到的是**目录**（比如误把
+  // node_modules\\electron 当成可执行文件），existsSync 同样为 true，
+  // 而 spawn 一个目录会得到 "Error: spawn ENOENT"，且这个错误发生在
+  // 子进程里，只弹一个原生 Error 对话框，终端里什么线索都没有。
+  // 这里提前拦下来，并把**实际用的路径**打出来。
+  try {
+    if (!fs.statSync(electron).isFile()) {
+      writeErrLine('[start] electron 路径不是文件，无法执行：', electron);
+      writeErrLine('       请执行 npm install 重新安装依赖');
+      process.exit(1);
+    }
+  } catch (e) {
+    writeErrLine('[start] electron 可执行文件不可用：', electron, '—', e && e.message);
+    writeErrLine('       请执行 npm install 重新安装依赖');
+    process.exit(1);
+  }
+  writeLine('[start] 使用 electron：' + electron);
 
   // 关键：清掉 ELECTRON_RUN_AS_NODE，否则 electron.exe 会以纯 Node 模式运行
   const env = { ...process.env };
@@ -63,6 +83,7 @@ function main() {
   const extraArgs = process.argv.slice(2);
   const args = extraArgs.length ? extraArgs : [ROOT];
 
+  const startedAt = Date.now();
   const child = spawn(electron, args, {
     cwd: ROOT,
     env,
@@ -75,13 +96,24 @@ function main() {
 
   child.on('error', (e) => {
     writeErrLine('[start] 启动失败：', e && e.message);
+    writeErrLine('       electron 路径：', electron);
     process.exit(1);
   });
 
   if (process.platform === 'win32') {
     // Windows 上不 unref：让父进程等子进程结束，
     // 这样 npm start 的终端能显示退出码与日志。
-    child.on('exit', (code) => process.exit(code == null ? 0 : code));
+    child.on('exit', (code) => {
+      // 启动失败时给出可操作的提示。
+      // 退出码 0 且启动后极快退出，通常是「已有实例在跑」——
+      // main.js 抢不到单实例锁会 exit(0)，那个分支自己会打印说明。
+      if (code === 0 && Date.now() - startedAt < 5000) {
+        writeLine('[start] 应用已退出（退出码 0）。');
+        writeLine('       若窗口没有出现：可能已有实例在运行并接管了，' +
+          '可用 node show.js 强制唤起窗口。');
+      }
+      process.exit(code == null ? 0 : code);
+    });
   } else {
     child.unref();
   }
