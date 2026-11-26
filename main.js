@@ -269,10 +269,11 @@ function setupShowServer() {
       }
       const cmd = buf.trim();
       if (cmd === 'show') {
-        // 把所有窗口显示出来：取消任务栏跳过 + 显示 + 置顶聚焦
+        // 把所有窗口显示出来：取消任务栏跳过 + 还原最小化 + 显示 + 聚焦
         BrowserWindow.getAllWindows().forEach((w) => {
           try {
             w.setSkipTaskbar(false);
+            if (w.isMinimized()) w.restore();
             if (!w.isVisible()) w.show();
             w.focus();
           } catch (_) {
@@ -280,6 +281,44 @@ function setupShowServer() {
           }
         });
         socket.write('ok\n');
+      } else if (cmd === 'status') {
+        // 报告所有窗口的实际状态。
+        //
+        // 【为什么需要】
+        // 「任务栏有图标、点开却看不到界面」这类问题，光看进程活着没用 ——
+        // 窗口可能是隐藏的、被最小化的、跑到屏幕外、或者尺寸异常。
+        // 把 visible / minimized / bounds 原样报出来，才能判断是哪一种。
+        const wins = BrowserWindow.getAllWindows().map((w) => {
+          let b = null;
+          try {
+            b = w.getBounds();
+          } catch (_) {
+            /* ignore */
+          }
+          return {
+            visible: w.isVisible(),
+            minimized: w.isMinimized(),
+            focused: w.isFocused(),
+            skipTaskbar: (() => {
+              try {
+                return w.isSkipTaskbar();
+              } catch (_) {
+                return null;
+              }
+            })(),
+            bounds: b,
+          };
+        });
+        socket.write(JSON.stringify({
+          ok: true,
+          windowCount: wins.length,
+          windows: wins,
+          displays: require('electron').screen.getAllDisplays().map((d) => ({
+            bounds: d.boundaries,
+            workArea: d.workArea,
+            scaleFactor: d.scaleFactor,
+          })),
+        }) + '\n');
       } else {
         socket.write('err\n');
       }
@@ -288,8 +327,21 @@ function setupShowServer() {
     socket.on('error', () => socket.destroy());
   });
   server.on('error', (e) => {
-    // 端口被占用（例如多个实例）/ 权限不足：打印告警但不阻断主流程
-    writeErrLine('[show-server] 启动失败：', e && e.message ? e.message : e);
+    // 端口被占用（例如多个实例）/ 权限不足：打印告警但不阻断主流程。
+    // 打包版是 GUI 程序，stderr 往往看不到 —— 所以**同时写进日志文件**，
+    // 否则「窗口起不来但没有任何提示」这类问题完全无从排查。
+    const msg = e && e.message ? e.message : String(e);
+    writeErrLine('[show-server] 启动失败：', msg);
+    try {
+      const fs2 = require('node:fs');
+      const os2 = require('node:os');
+      fs2.appendFileSync(
+        require('node:path').join(os2.tmpdir(), 'minibrowser-start-error.log'),
+        '[show-server] 启动失败（端口 ' + SHOW_PORT + '）：' + msg + '\r\n'
+      );
+    } catch (_) {
+      /* ignore */
+    }
   });
   server.listen(SHOW_PORT, SHOW_HOST, () => {
     writeLine('[show-server] 已启动，监听 ' + SHOW_HOST + ':' + SHOW_PORT +
