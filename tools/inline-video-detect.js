@@ -84,11 +84,59 @@ function buildInlineBlock() {
   ].join('\n');
 }
 
+/**
+ * 检查：内联块声明的顶层名字，是否在 webview-preload.js 的**其余部分**被重新声明。
+ *
+ * 【为什么必须查】
+ * JS 的函数声明会**提升**到作用域顶部，同一作用域里两个同名函数声明，
+ * 后者覆盖前者。内联机制把 video-detect.js 的内容直接塞进 webview-preload.js，
+ * 于是内联块里的 `collectVideoSources` 与 preload 自己定义的同名函数撞名 ——
+ * `det.collectVideoSources` 实际指向 preload 那个，而后者内部又调
+ * `det.collectVideoSources(...)` → **无限递归** →
+ * RangeError: Maximum call stack size exceeded。
+ *
+ * 真实后果：右键视频菜单从来就没能工作过（2026-09-04 引入，2026-11-26 定位）。
+ * 这类冲突在运行时才会暴露、且报错信息（栈里全是同一个函数名）极难定位，
+ * 所以在 --check 阶段就静态拦下来。
+ */
+function findNameCollisions(target) {
+  const startIdx = target.indexOf(BEGIN);
+  const endIdx = target.indexOf(END);
+  if (startIdx < 0 || endIdx < 0) return [];
+  const inline = target.slice(startIdx + BEGIN.length, endIdx);
+  const rest = target.slice(endIdx + END.length);
+
+  const names = new Set();
+  const declRe = /^(?:function|const|let|var|class)\s+([A-Za-z_$][\w$]*)/gm;
+  let m;
+  while ((m = declRe.exec(inline)) !== null) names.add(m[1]);
+
+  const collisions = [];
+  for (const n of names) {
+    // 在内联块之外重新声明了同名 → 提升会覆盖内联块的定义
+    const re = new RegExp('^(?:function|const|let|var|class)\\s+' + n.replace(/\$/g, '\\$') + '\\b', 'm');
+    if (re.test(rest)) collisions.push(n);
+  }
+  return collisions;
+}
+
 function main() {
   const checkOnly = process.argv.includes('--check');
   const block = buildInlineBlock();
 
   const target = fs.existsSync(TARGET) ? fs.readFileSync(TARGET, 'utf8') : '';
+
+  // 命名冲突检查（与内容是否同步无关，任何时候都该成立）
+  const collisions = findNameCollisions(target);
+  if (collisions.length) {
+    console.error('[inline] ★ 内联块的名字在 webview-preload.js 其余部分被重新声明：' +
+      collisions.join(', '));
+    console.error('[inline]   函数声明提升会让后者覆盖前者，' +
+      '导致 det.xxx 指向错误的实现（可能造成无限递归）。');
+    console.error('[inline]   请给其中一方改名。');
+    process.exit(1);
+  }
+
   const startIdx = target.indexOf(BEGIN);
   const endIdx = target.indexOf(END);
 

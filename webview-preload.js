@@ -290,6 +290,29 @@ document.addEventListener(
 //    注意：本处理器会被挂到「每个可访问文档」上（含同源 iframe），因为 contextmenu
 //    不会跨 frame 冒泡——播放器在 iframe 内时，主文档上的监听器根本收不到事件。
 function onContextMenu(e) {
+  try {
+    onContextMenuInner(e);
+  } catch (err) {
+    // 【为什么要包 try/catch】
+    // 这个处理器里任何一个环节抛异常（页面结构异常、某个 DOM API 在特定
+    // 状态下抛错……），后果是**整个右键菜单静默失效**：
+    // 既不会发 mb-video-context-menu，也不会发 mb-context-menu，
+    // 用户右键后什么反应都没有，且完全没有线索可查。
+    // 这里把错误回传给宿主（宿主会记日志），便于定位；
+    // 同时不调用 preventDefault，让浏览器退回原生右键菜单，用户至少还有东西可用。
+    try {
+      ipcRenderer.sendToHost('mb-page-handler-error', {
+        handler: 'onContextMenu',
+        message: err && err.message ? err.message : String(err),
+        stack: err && err.stack ? String(err.stack) : '',
+      });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function onContextMenuInner(e) {
   // 事件发生在哪个文档（本处理器会被挂到主文档与各同源 iframe 文档上）
   const evtDoc =
     e.currentTarget && e.currentTarget.nodeType === 9
@@ -301,7 +324,7 @@ function onContextMenu(e) {
   const videoEl =
     det.findVideoInPath(e.composedPath()) || videoAtPoint(e.clientX, e.clientY, evtDoc);
   if (videoEl) {
-    const sources = collectVideoSources(videoEl);
+    const sources = sourcesOfVideoElement(videoEl);
     ipcRenderer.sendToHost('mb-video-context-menu', {
       x: e.clientX,
       y: e.clientY,
@@ -553,7 +576,24 @@ let videoReportTimer = null;
 let videoScanTimer = null;
 
 // 把真实 <video> 元素转成平面描述，交给纯逻辑模块收集源（便于单测复用同一份实现）
-function collectVideoSources(videoEl) {
+/**
+ * 取某个 <video> 元素的可下载源。
+ *
+ * 【为什么叫 sourcesOfVideoElement 而不是 collectVideoSources】
+ * 内联的 video-detect.js 里已经有一个同名的 collectVideoSources(videoLike, m3u8, base)，
+ * 而 JS 的**函数声明提升**会让后声明的同名函数覆盖先声明的 ——
+ * 于是 `det.collectVideoSources` 实际指向了本函数，而本函数内部又调
+ * `det.collectVideoSources(...)` → **无限递归** → RangeError:
+ * Maximum call stack size exceeded。
+ *
+ * 后果：右键视频菜单**从来就没能工作过**（每次右键都栈溢出，
+ * 既不发 mb-video-context-menu 也不发 mb-context-menu，用户右键毫无反应），
+ * 且 scanVideos() 的每次扫描同样爆栈。
+ * （该冲突自 2026-09-04 引入内联机制起就存在，2026-11-26 才被定位。）
+ *
+ * 所以这里必须用不同的名字。
+ */
+function sourcesOfVideoElement(videoEl) {
   const srcs = [];
   try {
     const srcEls = videoEl.querySelectorAll('source');
@@ -716,7 +756,7 @@ function reportVideos() {
   scanPerformanceForM3u8();
   const list = [];
   videoRegistry.forEach((v) => {
-    const sources = collectVideoSources(v);
+    const sources = sourcesOfVideoElement(v);
     if (sources.length) {
       list.push({ sources, title: topTitle(), pageUrl: docBaseUrl(v.ownerDocument) });
     }

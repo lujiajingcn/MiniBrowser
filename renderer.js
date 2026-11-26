@@ -787,6 +787,15 @@ function wireWebview(tab) {
       else openFindBar();
       return;
     }
+    if (e.channel === 'mb-page-handler-error') {
+      // guest 里的页内处理器抛了异常。
+      // 这类错误在页面上**完全不可见**（用户只会觉得「右键没反应」），
+      // 必须在这里记下来，否则排查时毫无线索。
+      const payload = (e.args && e.args[0]) || {};
+      console.error('[page-handler] ' + (payload.handler || '?') + ' 抛异常: ' +
+        (payload.message || '') + (payload.stack ? '\n' + payload.stack : ''));
+      return;
+    }
     if (e.channel === 'mb-window-drag') {
       // 网页内容区（guest 进程）里的 Alt+左键，由 webview-preload 检测后转发。
       // 复用宿主的同一套开始/结束逻辑，主进程侧无需区分事件来自哪个进程。
