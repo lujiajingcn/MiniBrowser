@@ -275,6 +275,29 @@ body {
   background: var(--eraser-active-bg-hover);
 }
 
+/* ---------- 图钉（钉在桌面 / 窗口置顶） ---------- */
+.pin-btn svg {
+  display: block;
+  pointer-events: none; /* 点击落在 button 上而非 svg */
+  transform: rotate(-35deg);
+  transition: transform 0.15s ease;
+}
+
+/* 钉住时：图钉「立起来」，并高亮 */
+.pin-btn[aria-pressed='true'] svg {
+  transform: rotate(0deg);
+}
+
+.pin-btn[aria-pressed='true'] {
+  background: var(--eraser-active-bg);
+  color: var(--eraser-active-fg);
+  box-shadow: inset 0 0 0 1px var(--eraser-active-border);
+}
+
+.pin-btn[aria-pressed='true']:hover {
+  background: var(--eraser-active-bg-hover);
+}
+
 /* ---------- 地址栏 ---------- */
 .url-bar {
   flex: 1;

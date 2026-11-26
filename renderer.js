@@ -34,6 +34,7 @@ const downloadsClearBtn = document.getElementById('downloads-clear');
 const dlBadge = document.getElementById('dl-badge');
 const settingsBtn = document.getElementById('settings');
 const zoomBtn = document.getElementById('zoom');
+const pinBtn = document.getElementById('pin');
 const deboldBtn = document.getElementById('debold');
 const zoomMenu = document.getElementById('zoom-menu');
 const zoomMenuList = document.getElementById('zoom-menu-list');
@@ -729,6 +730,12 @@ function showPageContextMenu(x, y) {
   item('开发者工具', () => {
     const wv = activeWebview();
     if (wv) wv.openDevTools();
+  });
+  divider();
+  // 「钉在桌面」也放在右键菜单里 —— 无框模式(1/2)下工具栏是隐藏的，
+  // 那里没有图钉按钮可点。
+  item(isWindowPinned() ? '取消钉在桌面' : '钉在桌面（窗口置顶）', () => {
+    setPinned();
   });
   divider();
   item('最小化窗口', () => {
@@ -2778,6 +2785,82 @@ zoomBtn.addEventListener('click', (e) => {
   }
   showZoomMenu();
 });
+
+// ---------- 钉在桌面（窗口置顶） ----------
+// 当前是否已置顶。渲染层自己记一份，右键菜单文案要用；
+// 真实状态以主进程为准（setPinned 的返回值 / always-on-top-changed 通知）。
+let _windowPinned = false;
+
+/** 窗口当前是否处于置顶状态。 */
+function isWindowPinned() {
+  return _windowPinned;
+}
+
+/**
+ * 更新图钉按钮的激活态。
+ * @param {boolean} on 是否已置顶
+ */
+function updatePinButton(on) {
+  _windowPinned = !!on;
+  if (!pinBtn) return;
+  pinBtn.setAttribute('aria-pressed', _windowPinned ? 'true' : 'false');
+  pinBtn.title = _windowPinned
+    ? '取消钉住：窗口不再始终位于最前方'
+    : '钉在桌面：窗口始终保持在最前方（再次点击取消）';
+}
+
+/**
+ * 设置/切换窗口置顶。
+ *
+ * 语义与 QQ 截图的「钉在桌面」一致：**置顶但不抢焦点** ——
+ * 点下之后窗口保持在最前，用户仍然可以操作下面的窗口。
+ * （Electron 的 setAlwaysOnTop 文档：regardless of whether it's focused or not。）
+ *
+ * @param {boolean} [on] 指定状态；省略表示切换
+ */
+async function setPinned(on) {
+  if (!window.electronAPI || !window.electronAPI.setPinned) return;
+  let next;
+  try {
+    next = await window.electronAPI.setPinned(on);
+  } catch (_) {
+    return;
+  }
+  const pinned = !!next;
+  updatePinButton(pinned);
+  // 持久化：下次启动仍保持钉住（与透明模式一样存 localStorage）
+  try {
+    localStorage.setItem('mb_pinned', pinned ? '1' : '0');
+  } catch (_) {
+    /* 隐私模式等 localStorage 不可用时忽略 */
+  }
+}
+
+if (pinBtn) {
+  pinBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setPinned();
+  });
+}
+
+// 主进程通知置顶状态变化（用户可能从系统窗口菜单改过）
+if (window.electronAPI && window.electronAPI.onPinnedChanged) {
+  window.electronAPI.onPinnedChanged((on) => {
+    updatePinButton(on);
+    try {
+      localStorage.setItem('mb_pinned', on ? '1' : '0');
+    } catch (_) {
+      /* ignore */
+    }
+  });
+}
+
+// 恢复上次的钉住状态
+try {
+  if (localStorage.getItem('mb_pinned') === '1') setPinned(true);
+} catch (_) {
+  /* ignore */
+}
 
 // ---------- 去粗体 ----------
 /**

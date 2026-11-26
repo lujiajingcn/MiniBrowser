@@ -25,7 +25,11 @@ const ROOT = __dirname;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const PS = path.join(ROOT, 'tools', 'do-alt-drag.ps1');
 
-// 直接加载真实 main.js，让它创建真实主窗口并注册全部 ipcMain 处理
+// 直接加载真实 main.js，让它创建真实主窗口并注册全部 ipcMain 处理。
+// 独立 userData：单实例锁依赖该路径，用户正开着应用时也能并存运行。
+process.env.MB_USER_DATA_DIR = path.join(require('node:os').tmpdir(), 'minibrowser-diag-drag');
+// 独立 show-server 端口：用户的应用可能正占着默认端口 39321
+process.env.MB_SHOW_PORT = process.env.MB_SHOW_PORT || '39322';
 require(path.join(ROOT, 'main.js'));
 
 const { app, BrowserWindow, screen } = require('electron');
@@ -119,9 +123,17 @@ app.whenReady().then(async () => {
   console.log('will-resize: ' + willResize + '  preventDefault: ' + prevented);
   console.log('拖动脚本: ' + out);
 
-  console.log('\n结论: ' + (changes > 0
+  // 判定看**最终尺寸**是否真的变了，而不是变化次数：
+  // Windows 上 setPosition 之后 getBounds() 读回的高度偶尔会差 1px
+  // （边框/坐标取整造成的读数抖动，不是真的 resize —— 那种情况下
+  //  will-resize 触发次数是 0）。这种 ±1px 噪声不算「窗口变大」。
+  const finalChanged = Math.abs(b1.width - b0.width) > 1 || Math.abs(b1.height - b0.height) > 1;
+  const bigChanges = samples.filter((s2) =>
+    Math.abs(s2.width - b0.width) > 1 || Math.abs(s2.height - b0.height) > 1).length;
+  console.log('超过 1px 的尺寸变化次数: ' + bigChanges);
+  console.log('\n结论: ' + (finalChanged || bigChanges > 0
     ? '>>> 复现了「Alt 拖动到屏幕边缘时窗口变大」'
-    : '>>> 未复现'));
+    : '>>> 未复现（最终尺寸未变）'));
 
   // ---------- 回归验证：拖动结束后，窗口仍应能手动 resize ----------
   // 拖动期间用了 setResizable(false) 消除边框热区，

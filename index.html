@@ -97,6 +97,27 @@
           />
         </svg>
       </button>
+      <button
+        id="pin"
+        class="pin-btn"
+        title="钉在桌面：窗口始终保持在最前方（再次点击取消）"
+        aria-label="钉在桌面"
+        aria-pressed="false"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+          <!-- 图钉：钉帽 + 钉身 + 针尖。
+               用基础图形精确拼装，避免用来源不明的手写 path（形状容易画歪）。 -->
+          <rect x="7" y="2.4" width="10" height="4.6" rx="2.3" fill="currentColor" />
+          <path d="M8.7 7.6h6.6l-1.25 5.4H9.95z" fill="currentColor" />
+          <path
+            d="M12 13.4V21.6"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            fill="none"
+          />
+        </svg>
+      </button>
       <button id="zoom" class="zoom-btn" title="缩放级别 (Ctrl+0 恢复默认)" aria-label="缩放">100%</button>
       <button id="settings" title="设置" aria-label="设置">⚙</button>
     </div>

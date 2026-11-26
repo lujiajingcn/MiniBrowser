@@ -84,8 +84,15 @@ const { setupWindowDrag } = require('./window-drag');
  *
  * 这里给打包版指定一个专属目录名，与开发模式彻底隔离。
  * 必须在 app ready 之前设置（setPath 对 userData 生效需早于 ready）。
+ *
+ * MB_USER_DATA_DIR 环境变量可覆盖该路径：单实例锁是**依赖 userData 路径**的，
+ * 所以想同时跑第二个实例（例如自动化诊断脚本，而用户的应用还开着）时，
+ * 指定一个不同的目录就能绕开锁，互不干扰。
  */
-app.setPath('userData', path.join(app.getPath('appData'), 'MiniBrowser'));
+const USER_DATA_DIR = process.env.MB_USER_DATA_DIR
+  ? path.resolve(process.env.MB_USER_DATA_DIR)
+  : path.join(app.getPath('appData'), 'MiniBrowser');
+app.setPath('userData', USER_DATA_DIR);
 
 /**
  * 创建主窗口。
@@ -117,6 +124,13 @@ function createWindow(offscreen) {
   });
 
   win.loadFile(path.join(__dirname, 'index.html'));
+
+  // 置顶状态变化时通知渲染层：用户可能从系统窗口菜单改过置顶状态，
+  // 工具栏上的图钉按钮需要跟着变。
+  win.on('always-on-top-changed', (_e, isOnTop) => {
+    if (!win.webContents || win.webContents.isDestroyed()) return;
+    win.webContents.send('mb-pinned-changed', !!isOnTop);
+  });
 
   const args = parseLaunchArgs();
   if (args.autoDemo || args.captureOut) {
@@ -217,7 +231,12 @@ async function runDemoSequence(win, captureOut) {
 
 // 本地“显示”服务：仅在 127.0.0.1 监听，接收来自 show.js（cmd 命令行）的 show 指令后，
 // 把当前所有已隐藏的窗口重新显示出来。端口固定，作为“指定的命令行”所对应的端点。
-const SHOW_PORT = 39321;
+// show-server 的端口。可用 MB_SHOW_PORT 覆盖 —— 用户的应用正开着时
+// （占用默认端口），自动化诊断脚本用另一个端口即可并存，不会刷 EADDRINUSE 噪音。
+const SHOW_PORT = (() => {
+  const v = parseInt(process.env.MB_SHOW_PORT || '', 10);
+  return v > 0 && v < 65536 ? v : 39321;
+})();
 const SHOW_HOST = '127.0.0.1';
 let _showServerStarted = false;
 
@@ -325,6 +344,27 @@ app.whenReady().then(() => {
       if (win.isMaximized()) win.unmaximize();
       else win.maximize();
     } else if (action === 'close') win.close();
+  });
+
+  // 「钉在桌面」：窗口置顶但**不抢焦点**。
+  //
+  // Electron 的 setAlwaysOnTop 文档明确写着「regardless of whether it's
+  // focused or not」—— 它只改窗口的 Z 序，不改焦点，
+  // 所以用户点图钉之后仍然可以操作下面的窗口，这与 QQ 截图的
+  // 「钉在桌面」是同一个语义（区别于「抢焦点置顶」）。
+  //
+  // level 用 'normal'：置顶窗口排在其他置顶窗口之下，
+  // 但仍在普通窗口之上 —— 不会盖住别的应用的置顶弹窗（如系统音量条）。
+  ipcMain.handle('mb-pin-window', (event, on) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return false;
+    const next = typeof on === 'boolean' ? on : !win.isAlwaysOnTop();
+    try {
+      win.setAlwaysOnTop(next, 'normal');
+    } catch (_) {
+      /* 某些平台/状态下可能失败，忽略 */
+    }
+    return win.isAlwaysOnTop();
   });
 
   // 隐藏窗口：仅从应用内触发（右键菜单「隐藏窗口」）。窗口被隐藏但进程与下载任务继续运行；

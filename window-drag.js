@@ -275,15 +275,24 @@ function attachGuards(win) {
   // 兜底：万一 resize 真的发生了（will-resize 没覆盖到的路径，
   // 或拖动已开始但 activeWin 还没建立的那一瞬间），立刻把尺寸还原。
   //
-  // 【为什么不能只靠 will-resize】
+  // 【为什么不能依赖 activeWin】
   // will-resize 的拦截条件是 activeWin === win，而 activeWin 会被 blur 清空；
   // 鼠标还按着时失焦（窗口被遮挡、焦点转移）很常见，
   // 那之后 Chromium 的边框 resize 就再也拦不住了 —— 窗口会持续变大。
   // 这个兜底不依赖 activeWin 的存续，只依赖「当前正在拖动」这个事实。
+  //
+  // 【为什么要 1px 容差】
+  // Windows 上 setPosition 之后，getBounds() 读回的高度偶尔会与实际相差 1px
+  // （边框/坐标取整造成的读数抖动，不是真的 resize ——
+  // 那种情况下 will-resize 触发次数是 0）。
+  // 若严格比较，每次 poll 都会被误判成「尺寸被改了」而反复 setBounds 还原，
+  // 白跑大量调用还可能引起可见抖动。
+  // 所以只有偏差**超过 1px** 才认为发生了真正的 resize。
   win.on('resize', () => {
     if (!isDragging(win) || !dragSize) return;
     const b = win.getBounds();
-    if (b.width === dragSize.width && b.height === dragSize.height) return;
+    if (Math.abs(b.width - dragSize.width) <= 1 &&
+        Math.abs(b.height - dragSize.height) <= 1) return;
     try {
       win.setBounds({ x: b.x, y: b.y, width: dragSize.width, height: dragSize.height });
     } catch (_) {

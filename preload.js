@@ -56,6 +56,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   createWindow: (url) => ipcRenderer.send('mb-create-window', url),
   // 无边框窗口控制：action = 'min' | 'max' | 'close'
   windowControl: (action) => ipcRenderer.send('mb-win-control', action),
+  // 「钉在桌面」：窗口置顶但不抢焦点（类似 QQ 截图的「钉在桌面」）。
+  // on 省略时表示切换；返回值是设置后的实际状态（以主进程为准）。
+  setPinned: (on) => ipcRenderer.invoke('mb-pin-window', on),
+  // 主进程通知置顶状态变化（用户可能从窗口标题栏菜单改过）
+  onPinnedChanged: (cb) => {
+    const listener = (_e, value) => cb(!!value);
+    ipcRenderer.on('mb-pinned-changed', listener);
+    return () => ipcRenderer.removeListener('mb-pinned-changed', listener);
+  },
   // 隐藏当前窗口（进程与下载继续；重新显示需在 cmd 中运行 show.js 连接本地服务）
   hideWindow: () => ipcRenderer.send('mb-hide-window'),
   // Alt+左键拖动移动窗口：仅在「按下」与「松开」两个时刻通知主进程，
