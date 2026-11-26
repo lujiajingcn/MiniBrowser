@@ -1021,6 +1021,9 @@ body {
 .context-menu {
   position: absolute;
   min-width: 180px;
+  /* 菜单项文字过长时换行，而不是把窗口撑宽 */
+  max-width: min(320px, calc(100vw - 24px));
+  white-space: normal;
   background: var(--surface-bg);
   border: 1px solid var(--surface-border);
   border-radius: 8px;
@@ -1043,7 +1046,10 @@ body {
 .context-menu li {
   padding: 8px 12px;
   cursor: pointer;
-  white-space: nowrap;
+  /* 允许长文本换行：配合菜单的 max-width，
+     避免「网页存档（.mhtml 单文件）」这类长标签把菜单撑得超出窗口。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .context-menu li:hover {

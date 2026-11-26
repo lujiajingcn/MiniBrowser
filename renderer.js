@@ -263,6 +263,89 @@ function hideContextMenu() {
   contextMenu.classList.add('hidden');
 }
 
+/**
+ * 把浮层菜单定位到锚点附近，并**保证完整可见**。
+ *
+ * 【为什么要实测尺寸，而不是用写死的估算值】
+ * 旧实现是「窗口高 - 写死的估算高度」来夹取 top：
+ *   const maxY = Math.max(0, window.innerHeight - 240);
+ * 菜单项会随功能增减，实际高度经常超过这个估算值，
+ * 底部就被窗口边缘截断 —— 表现为「右键位置靠近下方时菜单显示不全」。
+ * （截图里的通用菜单有 11 项 + 3 个分隔线，实测约 310px，远超 240 的估算。）
+ *
+ * 【现在的行为与 Chrome 一致】
+ *   1. 先显示再测量实际尺寸（隐藏时 getBoundingClientRect 全是 0）；
+ *   2. 下方放不下就**向上弹**（底边对齐锚点）；
+ *   3. 上方也放不下（菜单比视口还高）就贴顶，并限制最大高度 + 允许滚动；
+ *   4. 水平方向同理：右侧放不下就翻到左侧。
+ *
+ * @param {HTMLElement} el 菜单元素
+ * @param {number} x 锚点横坐标（宿主视口坐标）
+ * @param {number} y 锚点纵坐标
+ * @param {object} [opts]
+ * @param {'point'|'below'} [opts.mode]
+ *   'point'（默认）：以锚点为菜单左上角，Chrome 风格的右键菜单；
+ *   'below'：显示在锚点**下方**（用于锚定到某个按钮的菜单），
+ *            下方放不下时翻到锚点上方。
+ * @param {number} [opts.anchorTop] 'below' 模式下锚点矩形的上沿（用于向上翻转）
+ */
+function positionContextMenu(el, x, y, opts) {
+  const o = opts || {};
+  const margin = 6;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // 先显示才量得到实际尺寸；量之前清掉上一次的 max-height/overflow，
+  // 否则「上次被限高」的菜单这次会按限高后的尺寸定位。
+  el.style.maxHeight = '';
+  el.style.overflowY = '';
+  el.classList.remove('hidden');
+  el.style.left = '0px';
+  el.style.top = '0px';
+
+  const rect = el.getBoundingClientRect();
+  const w = rect.width;
+  const h = rect.height;
+
+  // ---- 水平 ----
+  let left = x;
+  if (left + w + margin > vw) left = x - w; // 右侧放不下 → 翻到左侧
+  if (left < margin) left = margin; // 翻到左侧还越界 → 贴左
+  if (left + w + margin > vw) left = Math.max(margin, vw - w - margin); // 兜底贴右
+
+  // ---- 垂直 ----
+  let top;
+  if (o.mode === 'below') {
+    top = y; // y 是锚点矩形的下沿
+    if (top + h + margin > vh) {
+      // 下方放不下 → 翻到锚点上方
+      top = (typeof o.anchorTop === 'number' ? o.anchorTop : y) - h;
+    }
+  } else {
+    top = y; // y 是点击点
+    if (top + h + margin > vh) top = y - h; // 下方放不下 → 向上弹
+  }
+  if (top < margin) top = margin; // 上方也放不下 → 贴顶
+
+  // ---- 兜底：菜单仍会超出底边 ----
+  // 两种情况：
+  //   a) 锚点本身在视口外（点击点 y > 视口高，向上翻后底边仍越界）；
+  //   b) 菜单比视口还高。
+  if (top + h + margin > vh) {
+    if (h + margin * 2 > vh) {
+      // 菜单比视口还高 → 限高 + 允许滚动
+      el.style.maxHeight = Math.max(120, vh - margin * 2) + 'px';
+      el.style.overflowY = 'auto';
+      top = margin;
+    } else {
+      top = Math.max(margin, vh - h - margin); // 夹进视口
+    }
+  }
+
+  el.style.left = Math.round(left) + 'px';
+  el.style.top = Math.round(top) + 'px';
+}
+
 function showContextMenu(x, y, linkUrl) {
   if (!linkUrl) return;
   contextMenuList.innerHTML = '';
@@ -300,11 +383,7 @@ function showContextMenu(x, y, linkUrl) {
     }
   });
 
-  const maxX = Math.max(0, window.innerWidth - 180);
-  const maxY = Math.max(0, window.innerHeight - 120);
-  contextMenu.style.left = Math.min(x, maxX) + 'px';
-  contextMenu.style.top = Math.min(y, maxY) + 'px';
-  contextMenu.classList.remove('hidden');
+  positionContextMenu(contextMenu, x, y);
 }
 
 // ---------- 无框模式（隐藏工具栏/收藏夹/标签栏，仅留网页内容）----------
@@ -663,11 +742,7 @@ function showPageContextMenu(x, y) {
     if (window.electronAPI && window.electronAPI.hideWindow) window.electronAPI.hideWindow();
   });
 
-  const maxX = Math.max(0, window.innerWidth - 180);
-  const maxY = Math.max(0, window.innerHeight - 240);
-  contextMenu.style.left = Math.min(x, maxX) + 'px';
-  contextMenu.style.top = Math.min(y, maxY) + 'px';
-  contextMenu.classList.remove('hidden');
+  positionContextMenu(contextMenu, x, y);
 }
 
 // 点菜单之外 → 关闭菜单。用mousedown 而非 click：
@@ -1986,11 +2061,7 @@ function showVideoContextMenu(payload, wv) {
   const rect = wv ? wv.getBoundingClientRect() : { left: 0, top: 0 };
   const x = rect.left + (payload.x || 0);
   const y = rect.top + (payload.y || 0);
-  const maxX = Math.max(0, window.innerWidth - 180);
-  const maxY = Math.max(0, window.innerHeight - 120);
-  contextMenu.style.left = Math.min(x, maxX) + 'px';
-  contextMenu.style.top = Math.min(y, maxY) + 'px';
-  contextMenu.classList.remove('hidden');
+  positionContextMenu(contextMenu, x, y);
 }
 
 // 保存页面（离线查看）：把当前活动 webview 的页面存为本地文件，断网可双击打开
@@ -2035,10 +2106,10 @@ function showSavePageMenu(anchorEl) {
   item('完整网页（HTML + 资源，兼容性最佳）', () => doSavePage('HTMLComplete'));
   item('网页存档（.mhtml 单文件）', () => doSavePage('MHTML'));
 
-  const maxX = Math.max(0, window.innerWidth - 180);
-  contextMenu.style.left = Math.min(rect.left, maxX) + 'px';
-  contextMenu.style.top = rect.bottom + 4 + 'px';
-  contextMenu.classList.remove('hidden');
+  positionContextMenu(contextMenu, rect.left, rect.bottom + 4, {
+    mode: 'below',
+    anchorTop: rect.top,
+  });
 }
 
 async function doSavePage(type) {
