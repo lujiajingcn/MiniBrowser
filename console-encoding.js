@@ -3,25 +3,45 @@
 /**
  * 终端编码适配：让中文日志在 Windows 控制台上正常显示。
  *
- * 【问题】
- * Windows 控制台（cmd / PowerShell）默认代码页是 **936(GBK)**，
- * 而 Node 与 Electron 往 stdout 写的是 **UTF-8** 字节。
- * cmd 按 936 去解码这些字节，中文就变成「宸插惎鍔」这样的乱码。
- * 这不是应用 bug，是「写入编码」与「终端解码编码」不一致。
+ * 【Windows 上有两条完全不同的写入路径】
  *
- * 【为什么不用「把日志改成英文」绕开】
- * 那样确实能避开乱码，但会丢掉中文日志，而且只覆盖 stdout 上我们自己打的日志；
- * 第三方库（Electron 内部、依赖包）打的英文/中文日志照样可能乱码。
- * 按终端实际代码页编码输出是更彻底的解法。
+ * 1) stdout 连着**控制台**（TTY）：
+ *    libuv 走 `WriteConsoleW`，写入前会把内容按 **UTF-8 → UTF-16** 转换。
+ *    → 所以必须传**字符串**，中文才能正确显示。
+ *    → 传 Buffer（比如 GBK 字节）会被当成 UTF-8 解码 → **必然乱码**。
+ *
+ * 2) stdout 被**重定向**到文件/管道（IDE 集成终端、npm start 的管道等）：
+ *    libuv 走 `WriteFile`，直接写字节，控制台代码页不参与。
+ *    → 显示端按自己的方式解码；显示端若是 GBK(936)，就得写 GBK 字节，
+ *      否则乱码。
+ *
+ * 【所以策略是】
+ *   TTY      → 写**字符串**（不做任何转码）
+ *   非 TTY   → 按终端**实际代码页**写字节（iconv-lite 转换）
+ *
+ * 【曾经踩过的两个坑】
+ *
+ * 坑一：在 TTY 下也转 GBK —— 方向反了。
+ *   WriteConsoleW 会把传入的 Buffer 当 UTF-8 解码，
+ *   GBK 字节不是合法 UTF-8 → 乱码。
+ *   （本文件的旧版本正是这么做的，导致 cmd 里中文全是乱码。）
+ *
+ * 坑二：用 `!process.stdout.isTTY` 判断「是否终端」。
+ *   某些环境下 isTTY 是 **undefined** 而不是 false，
+ *   `!undefined` 为 true → 被误判成「重定向到文件」→ 走错分支。
+ *   只有**明确**是 false 才算重定向。
+ *
+ * 【环境变量】
+ *   MB_CONSOLE_ENCODING=gbk|utf8|big5 …  强制指定编码（跳过代码页探测）
+ *   MB_CONSOLE_MODE=auto|raw|cp         强制指定写入策略
+ *       auto（默认）TTY 写字符串 / 非 TTY 按代码页写字节
+ *       raw           始终写 UTF-8 字节
+ *       cp            始终按代码页写字节
  *
  * 【为什么不用 TextEncoder】
  * WHATWG 的 TextDecoder 支持 gbk 等编码（可以解码），
  * 但 TextEncoder **只支持 UTF-8**，没法把 UTF-8 转成 GBK 字节。
- * 所以这里用 iconv-lite 做编码转换。
- *
- * 【什么时候才需要】
- * 只有 stdout/stderr **是终端**时才需要 —— 重定向到文件或管道时，
- * UTF-8 才是更通用、更正确的选择（乱码反而是编码成 GBK 才会造成的问题）。
+ * 所以非 TTY 场景用 iconv-lite 做编码转换。
  */
 
 const { execSync } = require('node:child_process');
@@ -47,20 +67,19 @@ function detectEncoding() {
   if (_cached) return _cached;
   _cached = 'utf8';
   if (process.platform !== 'win32') return _cached;
+
   // 显式覆盖：MB_CONSOLE_ENCODING=gbk / utf8 / big5 …
-  // 探测万一失败（chcp 不可用、终端异常），用这个兜底。
   const forced = (process.env.MB_CONSOLE_ENCODING || '').toLowerCase();
   if (forced) {
     _cached = forced === 'utf8' ? 'utf8' : forced;
     return _cached;
   }
-  // 【为什么要判断 !== false 而不是 !isTTY】
-  // 有些 Windows 环境下 `process.stdout.isTTY` 是 **undefined** 而不是 false
-  // （TTY 信息缺失，但 stdout 确实连着控制台）。
-  // 用 `!isTTY` 判断会把它误当成「重定向到文件」→ 直接输出 UTF-8 →
-  // cmd 按 936(GBK) 解码 → 中文全是乱码。
-  // 只有**明确**是 false（真的重定向了）才当作非终端。
+
+  // 【坑二】只有**明确**是 false 才算「重定向到文件」。
+  // isTTY 为 undefined 时，stdout 往往仍然连着控制台，
+  // 此时仍应按控制台代码页来判断编码。
   if (process.stdout.isTTY === false) return _cached;
+
   try {
     // chcp 的输出本身可能就是乱码（GBK 系统输出中文、活动代码页: 936），
     // 但**数字**总是 ASCII 的，直接正则提取即可。
@@ -79,42 +98,61 @@ function detectEncoding() {
 }
 
 /**
- * 按终端编码写一行到 stdout。
+ * stdout 是否连着控制台。
+ * isTTY 为 undefined 时按「是控制台」处理（见文件头坑二）。
+ */
+function isConsole() {
+  return process.stdout.isTTY !== false;
+}
+
+/**
+ * 按当前策略写一行到 stdout。
  * @param {...any} args 与 console.log 相同的参数
  */
 function writeLine(...args) {
-  const text = args
-    .map((a) => (typeof a === 'string' ? a : require('node:util').inspect(a)))
-    .join(' ');
-  const enc = detectEncoding();
-  if (enc === 'utf8') {
-    process.stdout.write(text + '\n');
-    return;
-  }
-  try {
-    const iconv = require('iconv-lite');
-    process.stdout.write(iconv.encode(text + '\n', enc));
-  } catch (_) {
-    // iconv-lite 不可用时退回 UTF-8（可能乱码，但至少不会丢日志）
-    process.stdout.write(text + '\n');
-  }
+  writeTo(process.stdout, args);
 }
 
 /** 与 writeLine 相同，但写到 stderr。 */
 function writeErrLine(...args) {
+  writeTo(process.stderr, args);
+}
+
+/**
+ * 真正的写入实现。
+ * @param {NodeJS.WriteStream} stream 目标流
+ * @param {any[]} args 与 console.log 相同的参数
+ */
+function writeTo(stream, args) {
   const text = args
     .map((a) => (typeof a === 'string' ? a : require('node:util').inspect(a)))
     .join(' ');
+
+  const mode = (process.env.MB_CONSOLE_MODE || 'auto').toLowerCase();
+  // raw → 始终写字符串（内容是 UTF-8 字节，由 Node/终端自己处理）
+  // cp  → 始终按控制台代码页写字节（iconv 转换）
+  // auto→ TTY 写字符串；非 TTY 按代码页写字节
+  const useString = mode === 'raw' ? true : mode === 'cp' ? false : isConsole();
+
+  // 控制台：传**字符串**，让 libuv 走 WriteConsoleW 的 UTF-8→UTF-16 转换。
+  // 传 Buffer 会被当成 UTF-8 解码，GBK 字节必然乱码（见文件头坑一）。
+  if (useString) {
+    stream.write(text + '\n');
+    return;
+  }
+
+  // 重定向：按代码页写字节，让 GBK 显示端能正确解码。
   const enc = detectEncoding();
   if (enc === 'utf8') {
-    process.stderr.write(text + '\n');
+    stream.write(text + '\n');
     return;
   }
   try {
     const iconv = require('iconv-lite');
-    process.stderr.write(iconv.encode(text + '\n', enc));
+    stream.write(iconv.encode(text + '\n', enc));
   } catch (_) {
-    process.stderr.write(text + '\n');
+    // iconv-lite 不可用时退回 UTF-8（可能乱码，但至少不会丢日志）
+    stream.write(text + '\n');
   }
 }
 
