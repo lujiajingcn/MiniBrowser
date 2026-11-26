@@ -74,6 +74,15 @@ sock.on('close', () => {
 });
 
 sock.on('error', () => {
-  writeLine('连接失败：MiniBrowser 服务未运行或端口被占用（请确认应用正在运行）。');
+  writeLine('连接失败：MiniBrowser 服务未运行（端口 ' + PORT + '）。');
+  writeLine('');
+  writeLine('说明：应用没在跑，或者启动后立刻退出了。');
+  writeLine('请确认你运行的是**直接可执行**的那个文件：');
+  writeLine('  release\\win-unpacked\\MiniBrowser.exe');
+  writeLine('');
+  writeLine('注意区分（这三个行为完全不同）：');
+  writeLine('  MiniBrowser-1.0.0-x64.exe        ← NSIS 安装包，双击是装程序');
+  writeLine('  MiniBrowser-1.0.0-portable.exe   ← 自解压包，会先解压再运行');
+  writeLine('  win-unpacked\\MiniBrowser.exe    ← 直接启动应用');
   process.exit(1);
 });

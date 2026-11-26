@@ -47,7 +47,20 @@ function detectEncoding() {
   if (_cached) return _cached;
   _cached = 'utf8';
   if (process.platform !== 'win32') return _cached;
-  if (!process.stdout.isTTY) return _cached;
+  // 显式覆盖：MB_CONSOLE_ENCODING=gbk / utf8 / big5 …
+  // 探测万一失败（chcp 不可用、终端异常），用这个兜底。
+  const forced = (process.env.MB_CONSOLE_ENCODING || '').toLowerCase();
+  if (forced) {
+    _cached = forced === 'utf8' ? 'utf8' : forced;
+    return _cached;
+  }
+  // 【为什么要判断 !== false 而不是 !isTTY】
+  // 有些 Windows 环境下 `process.stdout.isTTY` 是 **undefined** 而不是 false
+  // （TTY 信息缺失，但 stdout 确实连着控制台）。
+  // 用 `!isTTY` 判断会把它误当成「重定向到文件」→ 直接输出 UTF-8 →
+  // cmd 按 936(GBK) 解码 → 中文全是乱码。
+  // 只有**明确**是 false（真的重定向了）才当作非终端。
+  if (process.stdout.isTTY === false) return _cached;
   try {
     // chcp 的输出本身可能就是乱码（GBK 系统输出中文、活动代码页: 936），
     // 但**数字**总是 ASCII 的，直接正则提取即可。
