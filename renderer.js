@@ -1276,6 +1276,27 @@ function closeBookmarksPopover() {
   _bmEditing = null;
 }
 
+/**
+ * 猜一个站点的 favicon 地址。
+ *
+ * 用于**收藏之前**就存在的老书签（那时还没记录 icon），
+ * 以及页面还没上报 favicon 就被收藏的情况 ——
+ * 大多数站点都在根目录放 /favicon.ico，猜对了就有图标，
+ * 猜错了 <img> 加载失败会自动回退到 🔗（见渲染处），不会显示破图。
+ *
+ * @param {string} url 页面地址
+ * @returns {string} 猜测的图标地址，无从猜测时返回空串
+ */
+function guessFaviconUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.origin + '/favicon.ico';
+  } catch (_) {
+    return '';
+  }
+}
+
 function renderBookmarksPopover() {
   // 面包屑：根 -> ... -> 当前文件夹
   bmCrumbs.innerHTML = '';
@@ -1307,6 +1328,10 @@ function renderBookmarksPopover() {
   });
 
   bmList.innerHTML = '';
+  // 兜底：_bmCurrent 可能为 null —— 例如刚收藏完时 closeBookmarksPopover()
+  // 已经把它清空，而后续又有代码来刷新面板（此前会直接抛
+  // "Cannot read properties of null (reading 'children')"，整个刷新中断）。
+  if (!_bmCurrent) _bmCurrent = getBookmarks();
   if (!_bmCurrent.children.length) {
     const empty = document.createElement('div');
     empty.className = 'bm-empty';
@@ -1324,7 +1349,42 @@ function renderBookmarksPopover() {
 
     const main = document.createElement('button');
     main.className = 'bm-row-main';
-    main.textContent = (node.type === 'folder' ? '📁 ' : '🔗 ') + node.title;
+    // 书签带站点图标（收藏时从 tab.favicon 记下），没有图标时退回 🔗 文字标记。
+    if (node.type === 'folder') {
+      main.textContent = '📁 ' + node.title;
+    } else {
+      // 老书签没有 icon → 猜站点根目录的 /favicon.ico；
+      // 加载失败会自动回退成 🔗（见下面的 error 处理）。
+      const iconSrc = node.icon || guessFaviconUrl(node.url);
+      if (iconSrc) {
+        const icon = document.createElement('img');
+        icon.className = 'bm-favicon';
+        icon.alt = '';
+        icon.loading = 'lazy';
+        // 统一的回退动作：去掉破图，换成 🔗 文字标记。
+        const fallbackToLink = () => {
+          if (!icon.isConnected) return;
+          icon.remove();
+          main.textContent = '🔗 ' + node.title;
+        };
+        icon.addEventListener('error', fallbackToLink);
+        icon.src = iconSrc;
+        main.appendChild(icon);
+        const label = document.createElement('span');
+        label.className = 'bm-row-label';
+        label.textContent = node.title;
+        main.appendChild(label);
+        // 超时兜底：有些环境下请求会被**挂起**（代理拦截、网络不通），
+        // 此时既不触发 error 也不触发 load，complete 一直为 false ——
+        // 图标就会一直空着（浏览器画个破图或什么都不画）。
+        // 所以额外加一个超时：还没加载完就按失败处理。
+        setTimeout(() => {
+          if (icon.isConnected && !icon.complete) fallbackToLink();
+        }, 4000);
+      } else {
+        main.textContent = '🔗 ' + node.title;
+      }
+    }
     main.title = node.type === 'folder' ? '打开文件夹：' + node.title : node.url;
     if (node.type === 'folder') {
       main.addEventListener('click', (e) => {
@@ -1607,7 +1667,14 @@ function bmAddCurrent() {
   // 先取目标文件夹标题：closeBookmarksPopover() 会把 _bmCurrent 置为 null，
   // 之后再取就拿不到了。
   const targetTitle = target.title || '全部书签';
-  target.children.push({ type: 'bookmark', title: (t && t.title) || url, url });
+  target.children.push({
+    type: 'bookmark',
+    title: (t && t.title) || url,
+    url,
+    // 站点图标：tab.favicon 由 page-favicon-updated 事件实时更新；
+    // 页面还没来得及上报时按站点约定猜一个（/favicon.ico）。
+    icon: (t && t.favicon) || guessFaviconUrl(url),
+  });
   saveBookmarks(root);
   renderBookmarks();
   // 收藏完成后收起弹层：这是一次性操作，做完就没必要让浮层继续挡着页面。

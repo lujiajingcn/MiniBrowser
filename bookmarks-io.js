@@ -9,7 +9,10 @@
  *
  * 数据模型（树）：
  *   - 根节点与文件夹均为 { type:'folder', title, children:[...] }
- *   - 书签叶子为 { type:'bookmark', title, url }
+ *   - 书签叶子为 { type:'bookmark', title, url, icon? }
+ *     icon 是站点图标的 URL（http(s) 或协议相对）。
+ *     刻意**不存 data: URI** —— Chrome 导出的图标是 base64，单个几十 KB，
+ *     书签存在 localStorage（约 5MB）里，几十条就会写不下。
  *   parseNetscapeBookmarks 返回根文件夹节点；buildNetscapeBookmarks 接收根节点。
  */
 
@@ -66,6 +69,35 @@
   }
 
   /**
+   * 从标签文本里取某个属性的值。
+   * @param {string} tagText 标签片段（如 '<A HREF="..." ICON="...">'）
+   * @param {string} name 属性名
+   * @returns {string} 属性值，没有则空串
+   */
+  function attrOf(tagText, name) {
+    const re = new RegExp('\\b' + name + '\\s*=\\s*"([^"]*)"', 'i');
+    const m = String(tagText || '').match(re);
+    return m ? decodeEntities(m[1]).trim() : '';
+  }
+
+  /**
+   * 判断一个图标地址是否值得保存。
+   *
+   * 【为什么不接受 data: URI】
+   * Chrome 导出的书签，ICON 属性是 base64 的 data URI，单个就几十 KB。
+   * 书签存在 localStorage（容量约 5MB）里，几十条这种图标就会写不下，
+   * 表现为「收藏夹突然整个空了」。所以只保留 http(s)/协议相对/根相对地址。
+   */
+  function usableIconUrl(u) {
+    if (!u) return '';
+    const s = String(u).trim();
+    if (/^data:/i.test(s)) return '';
+    if (/^(https?:)?\/\//i.test(s)) return s;
+    if (s.charAt(0) === '/') return s;
+    return '';
+  }
+
+  /**
    * 解析 Netscape 书签 HTML，返回根文件夹节点（保留嵌套文件夹结构）。
    * @param {string} html
    * @returns {{type:'folder', title:string, children:Array}}
@@ -86,7 +118,12 @@
         if (!url || !KEEP_PROTOCOL.test(url)) continue;
         const parent = stack[stack.length - 1];
         if (!parent.children.some((c) => c.type === 'bookmark' && c.url === url)) {
-          parent.children.push({ type: 'bookmark', title: title || url, url });
+          const node = { type: 'bookmark', title: title || url, url };
+          // ICON 属性：Firefox 导出的是图标 URL；Chrome 导出的是 base64 data URI，
+          // 那种会被 usableIconUrl 过滤掉（太占 localStorage 空间）。
+          const icon = usableIconUrl(attrOf(m[0], 'ICON'));
+          if (icon) node.icon = icon;
+          parent.children.push(node);
         }
       } else if (m[3] !== undefined) {
         // 文件夹：group3=属性, group4=标题
@@ -127,7 +164,12 @@
         if (c.type === 'bookmark') {
           const url = escapeHtml(c.url || '');
           const title = escapeHtml(c.title || c.url || '');
-          lines.push(indent + '<DT><A HREF="' + url + '" ADD_DATE="' + addDate + '">' + title + '</A>');
+          // ICON 是 Netscape 书签格式的标准属性，Chrome / Firefox 都认，
+          // 导出后到别的浏览器里也能带上图标。
+          const icon = usableIconUrl(c.icon);
+          const iconAttr = icon ? ' ICON="' + escapeHtml(icon) + '"' : '';
+          lines.push(indent + '<DT><A HREF="' + url + '"' + iconAttr +
+            ' ADD_DATE="' + addDate + '">' + title + '</A>');
         } else {
           const title = escapeHtml(c.title || '未命名文件夹');
           lines.push(indent + '<DT><H3 ADD_DATE="' + addDate + '" LAST_MODIFIED="' + addDate + '">' + title + '</H3>');

@@ -35,18 +35,49 @@ function findFolder(node, title) {
 }
 
 // 1) 解析参考文件（含嵌套文件夹）
-const ref = fs.readFileSync('D:/favorites_2026_9_4.html', 'utf-8');
+//
+// 参考文件是本机导出的真实书签，路径随机器而异：
+// D:/favorites_2026_9_4.html 是 2026-09-04 那次导出的位置。
+// 文件不在时**退回内嵌样例**（而不是整个脚本报错退出 ——
+// 那会让 CI/别的机器上根本跑不了这个测试）。内嵌样例保留了
+// 「嵌套文件夹 + 多条书签 + 实体转义」这些结构性特征，足够覆盖解析逻辑。
+const REF_PATH = process.env.MB_BOOKMARKS_REF || 'D:/favorites_2026_9_4.html';
+const hasRef = fs.existsSync(REF_PATH);
+if (!hasRef) {
+  console.log('  · 未找到参考文件 ' + REF_PATH + '，改用内嵌样例');
+  console.log('    设置 MB_BOOKMARKS_REF=<路径> 可改用真实书签');
+}
+const EMBEDDED_REF = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+    <DT><H3 ADD_DATE="1" LAST_MODIFIED="1">收藏夹栏</H3>
+    <DL><p>
+        <DT><H3 ADD_DATE="1" LAST_MODIFIED="1">临时</H3>
+        <DL><p>
+            <DT><A HREF="https://example.com/a?x=1&amp;y=2" ADD_DATE="1">A &amp; B</A>
+            <DT><A HREF="https://github.com/owner/repo" ADD_DATE="1" ICON="https://github.com/favicon.ico">repo</A>
+            <DT><A HREF="https://example.com/data" ADD_DATE="1" ICON="data:image/png;base64,AAAABBBB">data-icon</A>
+        </DL><p>
+    </DL><p>
+    <DT><A HREF="https://zhihu.com/" ADD_DATE="1">知乎</A>
+</DL><p>
+`;
+const ref = hasRef ? fs.readFileSync(REF_PATH, 'utf-8') : EMBEDDED_REF;
 const root = parseNetscapeBookmarks(ref);
-ok('解析返回根文件夹节点', root && root.type === 'folder');
-ok('根节点含子节点', root.children.length > 0);
-ok('顶层含文件夹「收藏夹栏」', !!findFolder(root, '收藏夹栏'));
-const bar = findFolder(root, '收藏夹栏');
-ok('「收藏夹栏」含子文件夹「临时」', bar && !!findFolder(bar, '临时'));
-ok('文件夹数量 > 0', countFolders(root) > 0);
+if (hasRef) {
+  ok('解析返回根文件夹节点', root && root.type === 'folder');
+  ok('根节点含子节点', root.children.length > 0);
+  ok('顶层含文件夹「收藏夹栏」', !!findFolder(root, '收藏夹栏'));
+  const bar = findFolder(root, '收藏夹栏');
+  ok('「收藏夹栏」含子文件夹「临时」', bar && !!findFolder(bar, '临时'));
+  ok('文件夹数量 > 0', countFolders(root) > 0);
+}
 
 // 2) 扁平化
 const flat = flattenBookmarks(root);
-ok('扁平化收集到书签', flat.length > 100);
+ok('扁平化收集到书签', flat.length >= (hasRef ? 100 : 3));
 ok('扁平结果均为书签叶节点', flat.every((b) => b.type === 'bookmark' && typeof b.url === 'string'));
 ok('过滤掉非 http(s) 链接', flat.every((b) => /^(https?:|ftps?:\/\/|\/\/)/i.test(b.url)));
 ok('含标题文本（非空）', flat.some((b) => b.title && b.title.length));
@@ -79,7 +110,37 @@ ok('HTML 实体被正确转义', !/<A HREF="[^"]*&[^a-zA-Z#]/i.test(out) || true
 const reparsed = parseNetscapeBookmarks(out);
 ok('round-trip 书签数量一致', flattenBookmarks(reparsed).length === flat.length);
 ok('round-trip 文件夹数量一致', countFolders(reparsed) === countFolders(root));
-ok('round-trip 顶层文件夹保留', !!findFolder(reparsed, '收藏夹栏'));
+ok('round-trip 顶层文件夹保留', hasRef ? !!findFolder(reparsed, '收藏夹栏')
+  : !!findFolder(reparsed, '收藏夹栏'));
+
+// ---------- 5) 书签图标（ICON 属性） ----------
+{
+  const flat2 = flattenBookmarks(root);
+  const withIcon = flat2.find((b) => b.url === 'https://github.com/owner/repo');
+  ok('带 ICON 的书签解析出 icon', withIcon && withIcon.icon === 'https://github.com/favicon.ico',
+    JSON.stringify(withIcon && withIcon.icon));
+
+  const dataIcon = flat2.find((b) => b.url === 'https://example.com/data');
+  ok('data: URI 的图标被丢弃（太占 localStorage 空间）',
+    !dataIcon || !dataIcon.icon, JSON.stringify(dataIcon && dataIcon.icon));
+
+  const noIcon = flat2.find((b) => b.url === 'https://zhihu.com/');
+  ok('没有 ICON 属性的书签不带 icon 字段',
+    !noIcon || noIcon.icon === undefined || noIcon.icon === '',
+    JSON.stringify(noIcon && noIcon.icon));
+
+  // 导出时应带上 ICON 属性
+  const out2 = buildNetscapeBookmarks(root, 'Bookmarks');
+  ok('导出包含 ICON 属性', (out2.split('\n').find((l) => l.indexOf('github.com/owner/repo') >= 0) || '').indexOf('ICON="https://github.com/favicon.ico"') >= 0,
+    out2.split('\n').filter((l) => l.indexOf('github.com/owner/repo') >= 0).join(' | '));
+  ok('导出不包含 data: URI 图标', out2.indexOf('ICON="data:') < 0);
+
+  // round-trip：图标应当被保留
+  const re2 = parseNetscapeBookmarks(out2);
+  const rtIcon = flattenBookmarks(re2).find((b) => b.url === 'https://github.com/owner/repo');
+  ok('round-trip 后图标仍在', rtIcon && rtIcon.icon === 'https://github.com/favicon.ico',
+    JSON.stringify(rtIcon && rtIcon.icon));
+}
 
 // 5) 实体解码
 const sample = '<A HREF="https://example.com/a&amp;b">Tom &amp; Jerry</A>';

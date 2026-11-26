@@ -1483,6 +1483,23 @@ body {
   background: var(--hover-bg-strong);
 }
 
+/* 书签的站点图标（收藏时从 tab.favicon 记下） */
+.bm-favicon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+/* 图标后面的标题：过长时省略号，不能把操作按钮挤出可视区 */
+.bm-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .bm-row-act {
   flex: none;
   border: none;
