@@ -283,8 +283,11 @@ async function runDemoSequence(win, captureOut) {
   }
 }
 
-// 本地“显示”服务：仅在 127.0.0.1 监听，接收来自 show.js（cmd 命令行）的 show 指令后，
-// 把当前所有已隐藏的窗口重新显示出来。端口固定，作为“指定的命令行”所对应的端点。
+// 本地“显示”服务：仅在 127.0.0.1 监听，接收来自 show.js（cmd 命令行）的指令：
+//   show   —— 还原最小化/隐藏的窗口；
+//   status —— 报告窗口真实状态；
+//   normal —— 关掉透明/无框模式（窗口因全透明而“看不见”时的逃生开关）。
+// 端口固定，作为“指定的命令行”所对应的端点。
 // show-server 的端口。可用 MB_SHOW_PORT 覆盖 —— 用户的应用正开着时
 // （占用默认端口），自动化诊断脚本用另一个端口即可并存，不会刷 EADDRINUSE 噪音。
 const SHOW_PORT = (() => {
@@ -293,6 +296,39 @@ const SHOW_PORT = (() => {
 })();
 const SHOW_HOST = '127.0.0.1';
 let _showServerStarted = false;
+
+/**
+ * 「恢复普通视图」脚本：关掉透明/完全透明/无框/无框2，并把状态持久化。
+ *
+ * 【为什么要从主进程注入】
+ * 用户把窗口调成全透明后，界面和右键菜单都看不见，没法从 UI 里退出来。
+ * show.js 的 normal 命令走本地服务端口，由主进程在渲染层执行这段脚本，
+ * 相当于一个「无论界面是否可见都能用」的逃生开关。
+ *
+ * 顺序：先撤完全透明再撤透明（完全透明依赖透明），最后撤两种无框模式。
+ */
+const RESET_VIEW_JS = `(function () {
+  function off(name) {
+    try {
+      if (typeof window[name] !== 'function') return name + ':missing';
+      window[name](false);
+      return name + ':ok';
+    } catch (e) {
+      return name + ':error:' + ((e && e.message) || String(e));
+    }
+  }
+  var results = [
+    off('applyFullTransparent'),
+    off('applyTransparent'),
+    off('applyFrameless2'),
+    off('applyFrameless'),
+  ];
+  try {
+    ['mb_full_transparent', 'mb_transparent', 'mb_frameless2', 'mb_frameless']
+      .forEach(function (k) { localStorage.setItem(k, '0'); });
+  } catch (_) { /* 存储不可用时忽略，class 已改，当前窗口可见即可 */ }
+  return results.join(',');
+})()`;
 
 function setupShowServer() {
   if (_showServerStarted) return;
@@ -320,6 +356,37 @@ function setupShowServer() {
           }
         });
         socket.write('ok\n');
+      } else if (cmd === 'normal' || cmd === 'reset') {
+        // 恢复普通视图：关闭透明/无框等「让窗口看不见」的模式。
+        // executeJavaScript 是异步的，这里自己负责回复与关闭 socket（不走末尾的 socket.end）。
+        const wins = BrowserWindow.getAllWindows();
+        let pending = wins.length;
+        let okCount = 0;
+        let detail = '';
+        if (!pending) {
+          socket.write('err\n');
+          socket.end();
+          return;
+        }
+        wins.forEach((w) => {
+          Promise.resolve()
+            .then(() => w.webContents.executeJavaScript(RESET_VIEW_JS))
+            .then((r) => {
+              okCount++;
+              detail += String(r || '') + ';';
+            })
+            .catch((e) => {
+              detail += 'error:' + ((e && e.message) || String(e)) + ';';
+            })
+            .then(() => {
+              if (--pending > 0) return;
+              writeLine('[show-server] 恢复普通视图：' + okCount + '/' + wins.length +
+                ' 个窗口成功' + (detail ? '（' + detail + '）' : ''));
+              socket.write(okCount ? 'ok\n' : 'err\n');
+              socket.end();
+            });
+        });
+        return;
       } else if (cmd === 'status') {
         // 报告所有窗口的实际状态。
         //

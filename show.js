@@ -5,6 +5,7 @@
 // 用法（在 cmd / PowerShell 中执行，无需参数）：
 //   node "E:\study_lujiajing\WorkSpace_MiniBrowser\MiniBrowser\show.js"          显示/恢复窗口
 //   node "...\show.js" status                                                    查询窗口状态（诊断用）
+//   node "...\show.js" normal                                                    关掉透明/无框模式（reset 同义）
 //
 // 原理：连接 MiniBrowser 主进程监听的本地端口，发送指令，主进程执行对应操作。
 //
@@ -28,6 +29,8 @@ const PORT = (() => {
 const HOST = '127.0.0.1';
 
 const CMD = (process.argv[2] || 'show').toLowerCase();
+// normal 是「恢复普通视图」的开关，reset 作为同义词，避免记不清具体单词。
+const IS_NORMAL = CMD === 'normal' || CMD === 'reset';
 
 const sock = net.connect(PORT, HOST, () => {
   sock.write(CMD + '\n');
@@ -63,6 +66,15 @@ sock.on('close', () => {
       });
     } catch (e) {
       writeLine('查询失败（返回内容无法解析）：' + t);
+    }
+    return;
+  }
+  if (IS_NORMAL) {
+    if (t === 'ok') {
+      writeLine('已恢复普通视图：透明、完全透明、无框模式均已关闭，并已保存。');
+      writeLine('（下次启动也会保持普通视图；若仍看不见，再运行 show.js。）');
+    } else {
+      writeLine('恢复普通视图失败：MiniBrowser 服务未运行或页面尚未加载。');
     }
     return;
   }
