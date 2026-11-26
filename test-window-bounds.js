@@ -66,16 +66,21 @@ function ok(cond, msg) {
   const area = { x: 0, y: 0, width: 1280, height: 720 };
   const bounds = { width: 2000, height: 1000 };
   const L = computePositionLimits(area, bounds);
-  // 装不下时退回「保留 visibleW 可见」
-  ok(L.minX === 80 - 2000, '3: 装不下时 minX 应为 area.x+80-width，实际 ' + L.minX);
-  ok(L.maxX === 1280 - 80, '3: 装不下时 maxX 应为 area.x+area.width-80，实际 ' + L.maxX);
-  ok(L.minY === 40 - 1000, '3: 装不下时 minY 应为 area.y+40-height，实际 ' + L.minY);
-  ok(L.maxY === 720 - 40, '3: 装不下时 maxY 应为 area.y+area.height-40，实际 ' + L.maxY);
+  // 装不下时限制的是「中心点」：至少一半在屏内，
+  // 不能退回「只留 80px 可见」—— 那会造成 resize 的正反馈（窗口越拖越大）。
+  ok(L.minX === -1000, '3: 装不下时 minX 应为中心贴左(0-2000/2)，实际 ' + L.minX);
+  ok(L.maxX === 280, '3: 装不下时 maxX 应为中心贴右(1280-2000/2)，实际 ' + L.maxX);
+  ok(L.minY === -500, '3: 装不下时 minY 应为中心贴上，实际 ' + L.minY);
+  ok(L.maxY === 220, '3: 装不下时 maxY 应=center贴下，实际 ' + L.maxY);
 
   const far = clampPosition(L, 99999, 99999);
-  ok(far.x === 1200, '3: 装不下时仍应夹到 1200，实际 ' + far.x);
-  // 至少还有 80px 在屏幕内
-  ok(far.x < area.width, '3: 装不下时窗口左侧仍应有可见部分，实际 x=' + far.x);
+  ok(far.x === 280, '3: 装不下时仍应夹到 280，实际 ' + far.x);
+  // 关键回归：窗口中心必须在屏幕内，且至少一半可见
+  const center = far.x + bounds.width / 2;
+  ok(center >= area.x && center <= area.x + area.width,
+    '3: 装不下时窗口中心应落在屏幕内，实际 center=' + center);
+  ok(far.x + bounds.width / 2 > area.x,
+    '3: 装不下时窗口应有至少一半在屏内，实际 x=' + far.x);
 }
 
 // ---------- 场景 4：恰好等于屏幕尺寸 ----------

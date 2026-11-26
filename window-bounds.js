@@ -31,19 +31,30 @@ function computePositionLimits(area, bounds) {
   // **不可见 resize 边框**上 —— 拖动于是变成 resize，
   // 表现为「按住 Alt 拖动过程中，窗口不断变大」。
   //
-  // 【窗口比屏幕大时：才退回「保留 visibleW 可见」】
-  // 这种情况下窗口本来就装不下，只能保证还有一条边能被抓住。
+  // 【窗口比屏幕大时：限制的是窗口「中心」而不是「可见宽度」】
+  // 旧实现在装不下时退回「保留 visibleW 可见」，那意味着窗口可以
+  // 一直往右挪到只剩 80px 在屏内 —— 鼠标同样会滑到窗口之外，
+  // 于是 resize 发生 → 窗口更宽 → 更装不下 → 更能出屏 → **正反馈**，
+  // 表现为窗口「缓缓变大」且停不下来。
+  // 所以这里改为：窗口比屏幕大时，保证它的**中心**落在屏幕内，
+  // 这样至少有一半在屏内，鼠标不会轻易滑出窗口。
   const fitsHorizontally = bounds.width <= area.width;
   const fitsVertically = bounds.height <= area.height;
 
-  return {
-    minX: fitsHorizontally ? area.x : area.x + visibleW - bounds.width,
-    maxX: fitsHorizontally ? area.x + area.width - bounds.width
-      : area.x + area.width - visibleW,
-    minY: fitsVertically ? area.y : area.y + visibleH - bounds.height,
-    maxY: fitsVertically ? area.y + area.height - bounds.height
-      : area.y + area.height - visibleH,
-  };
+  const minX = fitsHorizontally
+    ? area.x
+    : area.x - bounds.width / 2;
+  const maxX = fitsHorizontally
+    ? area.x + area.width - bounds.width
+    : area.x + area.width - bounds.width / 2;
+  const minY = fitsVertically
+    ? area.y
+    : area.y - bounds.height / 2;
+  const maxY = fitsVertically
+    ? area.y + area.height - bounds.height
+    : area.y + area.height - bounds.height / 2;
+
+  return { minX, maxX, minY, maxY };
 }
 
 /** 把目标位置夹到允许范围内。 */

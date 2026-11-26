@@ -40,6 +40,12 @@ const dragStates = new WeakMap();
 /** 当前正在被拖动的窗口。同一时刻只可能有一个窗口被拖（只有一个鼠标指针）。 */
 let activeWin = null;
 let pollTimer = null; // 全局只跑一个定时器
+// 拖动开始时的窗口尺寸，resize 兜底据此把尺寸还原
+let dragSize = null;
+// 失焦后延迟结束拖动的定时器
+let blurTimer = null;
+// 失焦后多久还没等到结束信号就结束拖动（ms）
+const BLUR_END_DELAY = 400;
 
 /**
  * 拖动期间禁止窗口被 resize。
@@ -65,6 +71,38 @@ let pollTimer = null; // 全局只跑一个定时器
  */
 function isDragging(win) {
   return activeWin === win;
+}
+
+/**
+ * 拖动期间禁止窗口被 resize。
+ *
+ * 【为什么要防】
+ * frame:false 的窗口在 Windows 上仍保留 Chromium 的**不可见 resize 边框**，
+ * 鼠标滑到窗口边缘就会命中它 → Chromium 开始 resize。
+ * 而拖动窗口时鼠标与窗口的相对位置本应保持不变，一旦因为边界约束
+ * 把窗口「拉回」屏幕内，鼠标就会重新贴上窗口边缘 → 反复命中 →
+ * 窗口一点点变大（正反馈），表现为「按住 Alt 拖动过程中窗口不断变大」。
+ *
+ * 【为什么用 setResizable 而不是只靠 will-resize】
+ * will-resize 是「事后否决」，依赖「拦截的那一刻恰好处于拖动态」。
+ * 只要 activeWin 因失焦被清空、或拖动刚开始还没建立状态，就漏一次，
+ * 而漏一次就足以让窗口变大并进入正反馈。
+ * setResizable(false) 是「从源头消除」—— 边框热区根本不存在，
+ * Chromium 连 resize 意图都不会产生（实测 will-resize 触发 0 次）。
+ *
+ * 【代价：它会引发一次 blur】
+ * setResizable 会重建窗口的 non-client 区域，导致窗口失焦。
+ * 曾经的 blur 处理是「立即结束拖动」，那样拖动会被自己的保护措施打断。
+ * 现在 blur 改为**延迟结束**（见 attachGuards），那次自发的 blur 会被吸收。
+ */
+function setResizableDuringDrag(win, resizable) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isResizable() === resizable) return;
+  try {
+    win.setResizable(resizable);
+  } catch (_) {
+    /* 某些平台/状态下可能失败，忽略即可 */
+  }
 }
 
 /**
@@ -118,6 +156,16 @@ function stopPolling() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  if (blurTimer) {
+    clearTimeout(blurTimer);
+    blurTimer = null;
+  }
+  // 恢复可缩放。
+  // 放在这里而不是 endDrag()：stopPolling 是**所有**停止路径的汇合点
+  // （ipcMain 的 mb-window-drag-end 直接调它、blur 的兜底调它、
+  // pollOnce 发现窗口已销毁也会调它），放这里才保证不会漏恢复。
+  if (activeWin) setResizableDuringDrag(activeWin, true);
+  dragSize = null;
   activeWin = null;
 }
 
@@ -132,6 +180,26 @@ function beginDrag(win) {
   if (win.isMaximized()) win.unmaximize();
   if (win.isFullScreen()) win.setFullScreen(false);
 
+  // ★ 从源头消除 Chromium 的不可见 resize 边框。
+  //
+  // 【为什么必须这么做】
+  // frame:false 的窗口在 Windows 上仍保留 4~8px 的不可见 resize 边框，
+  // 鼠标滑到窗口边缘就会命中它 → Chromium 开始 resize。
+  // 而拖动窗口时鼠标与窗口的相对位置本应保持不变，一旦因为边界约束
+  // 把窗口「拉回」屏幕内，鼠标就会重新贴上窗口边缘 → 反复命中 →
+  // 窗口一点点变大（正反馈）。
+  //
+  // setResizable(false) 直接让这条边框消失（实测 will-resize 触发 0 次，
+  // 拖窗口右下角尺寸零变化），比事后用 will-resize 否决可靠得多 ——
+  // 后者依赖「拦截时恰好处于拖动态」，任何一次状态错位就漏了。
+  //
+  // 【代价：它会引发一次 blur】
+  // setResizable 会重建窗口的 non-client 区域，导致窗口失焦。
+  // 而 blur 在这里曾被当作「结束拖动」的信号 —— 那样拖动会被自己的
+  // 保护措施打断。现在 blur 改为**延迟结束**（见 attachGuards），
+  // 那次自发的 blur 会被吸收掉，拖动不受影响。
+  setResizableDuringDrag(win, false);
+
   const cursor = screen.getCursorScreenPoint();
   const bounds = win.getBounds();
 
@@ -142,6 +210,9 @@ function beginDrag(win) {
     grabOffsetX: cursor.x - bounds.x,
     grabOffsetY: cursor.y - bounds.y
   });
+
+  // 记下拖动开始时的尺寸，resize 兜底据此还原
+  dragSize = { width: bounds.width, height: bounds.height };
 
   activeWin = win;
   if (!pollTimer) {
@@ -201,13 +272,49 @@ function attachGuards(win) {
     if (isDragging(win)) e.preventDefault();
   });
 
+  // 兜底：万一 resize 真的发生了（will-resize 没覆盖到的路径，
+  // 或拖动已开始但 activeWin 还没建立的那一瞬间），立刻把尺寸还原。
+  //
+  // 【为什么不能只靠 will-resize】
+  // will-resize 的拦截条件是 activeWin === win，而 activeWin 会被 blur 清空；
+  // 鼠标还按着时失焦（窗口被遮挡、焦点转移）很常见，
+  // 那之后 Chromium 的边框 resize 就再也拦不住了 —— 窗口会持续变大。
+  // 这个兜底不依赖 activeWin 的存续，只依赖「当前正在拖动」这个事实。
+  win.on('resize', () => {
+    if (!isDragging(win) || !dragSize) return;
+    const b = win.getBounds();
+    if (b.width === dragSize.width && b.height === dragSize.height) return;
+    try {
+      win.setBounds({ x: b.x, y: b.y, width: dragSize.width, height: dragSize.height });
+    } catch (_) {
+      /* ignore */
+    }
+  });
+
   const stop = () => endDrag(win);
-  win.on('blur', stop);
   win.on('hide', stop);
   win.on('close', stop);
   win.on('closed', () => {
     stop();
     delete win.__mbDragGuards;
+  });
+
+  // 失焦**不立即**结束拖动。
+  //
+  // 【为什么】
+  // 失焦不等于拖动结束 —— 鼠标还按着时，窗口被遮挡、焦点转移都会触发 blur，
+  // 若此时立刻结束拖动，Chromium 的边框 resize 就会失去拦截而让窗口变大。
+  // 真正的结束信号是 mouseup / Alt 松开（由渲染层通知）。
+  //
+  // 【为什么还需要这个兜底】
+  // 鼠标在别处松开时，目标窗口收不到 mouseup，拖动状态会悬着，
+  // 所以延迟一段时间后若仍没有收到结束信号，就结束它。
+  win.on('blur', () => {
+    if (!isDragging(win)) return;
+    clearTimeout(blurTimer);
+    blurTimer = setTimeout(() => {
+      if (isDragging(win)) stopPolling();
+    }, BLUR_END_DELAY);
   });
 }
 
