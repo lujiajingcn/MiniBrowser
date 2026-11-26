@@ -68,6 +68,7 @@ sock.on('close', () => {
   }
   if (t === 'ok') {
     writeLine('已发送显示命令，MiniBrowser 窗口即将恢复。');
+    writeLine('（若窗口此前是最小化/隐藏状态，会一并还原并聚焦。）');
   } else {
     writeLine('未能恢复窗口：MiniBrowser 服务未运行（应用可能未启动或已退出）。');
   }
