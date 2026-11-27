@@ -474,6 +474,7 @@ function docBaseUrl(doc) {
 const DRAG_THRESHOLD = 4; // px，超过即认为是拖动意图
 
 let altDragPending = null; // { x, y } 已按下Alt+左键但尚未越过阈值
+let altDragging = false; // 确实发出过 start，只有这时才需要发 end
 
 function onAltDragMouseDown(e) {
   if (e.button !== 0 || !e.altKey) return;
@@ -491,18 +492,22 @@ function onAltDragMouseMove(e) {
   // 越过阈值 → 认定为拖动窗口，拦下网页后续行为
   const start = altDragPending;
   altDragPending = null;
+  altDragging = true;
   ipcRenderer.sendToHost('mb-window-drag', { action: 'start', x: start.x, y: start.y });
   e.preventDefault();
   e.stopPropagation();
 }
 
+function finishAltDrag() {
+  if (!altDragging) return; // 纯点击、或已经结束过：不再发多余的 end
+  altDragging = false;
+  ipcRenderer.sendToHost('mb-window-drag', { action: 'end' });
+}
+
 function onAltDragMouseUp(e) {
   if (e.button !== 0) return;
-  const wasPending = !!altDragPending;
   altDragPending = null;
-  // 只有「已认定为拖动」才需要通知结束；纯点击什么都不做
-  if (wasPending) return;
-  ipcRenderer.sendToHost('mb-window-drag', { action: 'end' });
+  finishAltDrag();
 }
 
 // 7. 左键点击页面 → 通知外壳关闭右键菜单。
@@ -525,7 +530,7 @@ function onAltDragKeyUp(e) {
   // Alt 先松开时也要结束拖动，否则窗口会黏着鼠标不放
   if (e.key === 'Alt') {
     altDragPending = null;
-    ipcRenderer.sendToHost('mb-window-drag', { action: 'end' });
+    finishAltDrag();
   }
 }
 
@@ -542,27 +547,34 @@ function ensureDocListener(doc) {
     doc.addEventListener('keyup', onAltDragKeyUp, true);
     // 点页面关闭右键菜单：mousedown 也要覆盖同源 iframe（与上面同理）
     doc.addEventListener('mousedown', onPagePointerDown, true);
+    // 应用快捷键转发同样要覆盖同源 iframe（播放器常在 iframe 里）
+    doc.addEventListener('keydown', onKeyDown, true);
   } catch (_) {
     /* ignore */
   }
 }
 
-// 5. 键盘：焦点在页面内时外壳收不到 keydown，需把查找快捷键转发给外壳。
-//    Ctrl/Cmd+F 打开查找条；Esc 关闭查找条（不 preventDefault，避免影响页面自身的 Esc 行为）。
-document.addEventListener(
-  'keydown',
-  (e) => {
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (ctrl && (e.key === 'f' || e.key === 'F')) {
-      e.preventDefault();
-      e.stopPropagation();
-      ipcRenderer.sendToHost('mb-find', { action: 'open' });
-    } else if (e.key === 'Escape') {
-      ipcRenderer.sendToHost('mb-find', { action: 'close' });
-    }
-  },
-  true
-);
+// 5. 键盘：焦点在页面内时外壳收不到 keydown，需把应用快捷键转发给外壳。
+//    Ctrl/Cmd+F 打开查找条；Esc 关闭查找条；
+//    Ctrl/Cmd+T/W/Shift+T/±/0 由外壳的 handleAppShortcut 统一处理。
+//    注册在 ensureDocListener 里，才能覆盖同源 iframe（播放器常在 iframe 内）。
+function onKeyDown(e) {
+  const ctrl = e.ctrlKey || e.metaKey;
+  const k = String(e.key || '').toLowerCase();
+  if (ctrl && k === 'f') {
+    e.preventDefault();
+    e.stopPropagation();
+    ipcRenderer.sendToHost('mb-find', { action: 'open' });
+  } else if (ctrl && (k === 't' || k === 'w' || k === '0' ||
+                      k === '=' || k === '+' || k === '-' || k === '_')) {
+    e.preventDefault();
+    e.stopPropagation();
+    ipcRenderer.sendToHost('mb-shortcut', { ctrl: true, shift: !!e.shiftKey, key: e.key });
+  } else if (e.key === 'Escape') {
+    // 不 preventDefault：页面自身的 Esc 行为（关闭弹窗/退出全屏）要保留。
+    ipcRenderer.sendToHost('mb-find', { action: 'close' });
+  }
+}
 
 // ---------- 视频探测 + 下载（页面内可播放视频 → 下载为 MP4）----------
 // 右键点击 <video> 或在工具栏点「下载视频」时，把检测到的视频源（直链 / HLS 的 .m3u8）
@@ -755,6 +767,11 @@ function scheduleVideoReport() {
 function reportVideos() {
   scanPerformanceForM3u8();
   const list = [];
+  // Set 是强引用：页面动态删除 <video> 后元素仍留在表里，既无法 GC，
+  // 又会把已不存在的源上报给「下载视频」列表。上报前清掉脱离 DOM 的元素。
+  for (const v of videoRegistry) {
+    if (!v.isConnected) videoRegistry.delete(v);
+  }
   videoRegistry.forEach((v) => {
     const sources = sourcesOfVideoElement(v);
     if (sources.length) {

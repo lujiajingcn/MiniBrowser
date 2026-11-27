@@ -98,6 +98,20 @@ function normalizeUrl(input) {
   return searchUrl() + encodeURIComponent(url);
 }
 
+// 网页发起的非常规协议只能交给白名单内的系统处理器。
+// 与 preload.js 的 EXTERNAL_URL_RE 保持一致：脏 URL 不跨进程传递，
+// preload 侧再校验一次作为最后防线。
+const EXTERNAL_URL_RE = /^(https?:\/\/|mailto:|tel:)/i;
+function openExternalUrl(url) {
+  if (typeof url !== 'string') return false;
+  const target = url.trim();
+  if (!EXTERNAL_URL_RE.test(target)) return false;
+  if (window.electronAPI && window.electronAPI.openExternal) {
+    window.electronAPI.openExternal(target);
+  }
+  return true;
+}
+
 function activeTab() {
   return tabs.find((t) => t.id === activeTabId) || null;
 }
@@ -179,6 +193,11 @@ function renderTabElement(tab) {
 }
 
 function setActiveTab(id) {
+  // 目标 ID 不存在时回退到最后一个标签。绝不让 activeTabId 指向不存在的 ID：
+  // 那样所有 webview 都不带 .active，内容区全白，且缩放/查找/关闭等快捷键全失效。
+  if (!tabs.some((x) => x.id === id) && tabs.length) {
+    id = tabs[tabs.length - 1].id;
+  }
   activeTabId = id;
   tabs.forEach((t) => {
     const isActive = t.id === id;
@@ -198,8 +217,14 @@ function setActiveTab(id) {
   updateDeboldButton();
   // 切标签后缩放菜单里的档位就不再对应当前标签了，直接收起。
   hideZoomMenu();
-  // 切换标签时清掉该页面残留的查找高亮（查找条处于关闭状态时）
+  // did-start/stop-loading 只更新活动标签的加载条，后台标签的状态变化不会反映到工具栏。
+  // 切标签时必须按新标签的 loading 状态补齐，否则会显示上一个标签的转圈/✕。
+  loadingBar.classList.toggle('active', !!t.loading);
+  reloadBtn.textContent = t.loading ? '✕' : '⟳';
+  // 查找条开着时切标签：清空旧页计数并对新页重新查找，
+  // 否则数字还是上一页的，而新页面没有任何高亮。
   if (findBar.classList.contains('hidden')) stopFindOn(t.webview);
+  else runFind(true);
   // 擦除模式下切标签：把橡皮擦应用到新标签的页面，否则切过去就没反应
   if (eraserActive) applyEraser(t.webview, true);
   saveTabs();
@@ -238,7 +263,10 @@ function saveTabs() {
   try {
     const payload = {
       tabs: tabs.map((t) => ({ url: t.url, title: t.title, favicon: t.favicon })),
-      activeTabId
+      activeTabId,
+      // ID 是自增的，关掉中间标签后会留空洞；恢复时重新编号无法对齐。
+      // 存数组下标才可靠。activeTabId 仍保留，兼容旧数据与外部读取。
+      activeIndex: tabs.findIndex((t) => t.id === activeTabId)
     };
     localStorage.setItem('mb_tabs', JSON.stringify(payload));
   } catch (_) {
@@ -252,8 +280,14 @@ function restoreTabs() {
     if (!raw) return false;
     const data = JSON.parse(raw);
     if (!data || !data.tabs || !data.tabs.length) return false;
-    data.tabs.forEach((t) => createTab(t.url, false));
-    if (data.activeTabId) setActiveTab(data.activeTabId);
+    const rebuilt = data.tabs.map((t) => createTab(t.url, false));
+    // 优先用下标定位；旧数据没有 activeIndex 时退回按 ID 找。
+    let idx = typeof data.activeIndex === 'number' ? data.activeIndex : -1;
+    if (idx < 0 || idx >= rebuilt.length) {
+      idx = rebuilt.findIndex((t) => t.id === data.activeTabId);
+    }
+    const target = rebuilt[idx >= 0 ? idx : rebuilt.length - 1];
+    if (target) setActiveTab(target.id);
     return true;
   } catch (_) {
     return false;
@@ -554,7 +588,15 @@ function setInjectedCss(webview, name, css, on, force) {
     _injectedCssKeys.set(webview, store);
   }
   const key = store.get(name);
+  // 每次操作递增代号：insertCSS 是异步的，快速关闭再开启时，
+  // 迟到的 Promise 不能用旧 key 覆盖新状态（否则样式关不掉）。
+  const genKey = name + ':gen';
+  const gen = (store.get(genKey) || 0) + 1;
+  store.set(genKey, gen);
+
   if (!on) {
+    // 无论 key 是否已到达都要标记关闭；晚到的 key 会在 then 里被移除。
+    store.delete(name);
     if (key != null) {
       try {
         const p = webview.removeInsertedCSS(key);
@@ -562,7 +604,6 @@ function setInjectedCss(webview, name, css, on, force) {
       } catch (_) {
         /* ignore */
       }
-      store.delete(name);
     }
     return;
   }
@@ -572,6 +613,18 @@ function setInjectedCss(webview, name, css, on, force) {
     const p = webview.insertCSS(css);
     if (p && typeof p.then === 'function') {
       p.then((k) => {
+        if (store.get(genKey) !== gen) {
+          // 期间已被关闭或又发起了一次注入：这个 key 已过期，立即移除，避免样式残留。
+          if (k) {
+            try {
+              const r = webview.removeInsertedCSS(k);
+              if (r && typeof r.catch === 'function') r.catch(() => {});
+            } catch (_) {
+              /* ignore */
+            }
+          }
+          return;
+        }
         if (k) store.set(name, k);
       }).catch(() => {
         /* 某些页面 CSP 下 insertCSS 可能失败，忽略 */
@@ -835,6 +888,7 @@ function wireWebview(tab) {
     if (tab.id === activeTabId) {
       document.title = (e.title ? e.title + ' - ' : '') + 'MiniBrowser';
     }
+    updateHistoryTitle(tab.url, e.title);
     renderTabElement(tab);
     saveTabs();
   });
@@ -850,12 +904,14 @@ function wireWebview(tab) {
   wv.addEventListener('found-in-page', (e) => {
     const r = e.result || {};
     if (typeof r.matches !== 'number') return;
+    // 切标签后旧标签可能还在上报查找结果，不能让它覆盖当前页的计数。
+    if (tab.id !== activeTabId) return;
     updateFindCount(r.matches, r.activeMatchOrdinal);
   });
   wv.addEventListener('new-window', (e) => {
     e.preventDefault();
     if (/^(https?:|about:|file:)/i.test(e.url)) openUrlFromPage(e.url);
-    else if (window.electronAPI) window.electronAPI.openExternal(e.url);
+    else openExternalUrl(e.url);
   });
   // 接收 webview-preload.js 通过 sendToHost 转发的新窗口请求 / 右键菜单
   wv.addEventListener('ipc-message', (e) => {
@@ -864,7 +920,7 @@ function wireWebview(tab) {
       const url = payload.url;
       if (!url) return;
       if (/^(https?:|about:|file:)/i.test(url)) openUrlFromPage(url);
-      else if (window.electronAPI) window.electronAPI.openExternal(url);
+      else openExternalUrl(url);
       return;
     }
     if (e.channel === 'mb-find') {
@@ -872,6 +928,12 @@ function wireWebview(tab) {
       const payload = e.args && e.args[0] ? e.args[0] : {};
       if (payload.action === 'close') closeFindBar();
       else openFindBar();
+      return;
+    }
+    if (e.channel === 'mb-shortcut') {
+      // 网页聚焦时宿主收不到 keydown，guest 转发到这里走同一套快捷键逻辑。
+      const payload = e.args && e.args[0] ? e.args[0] : {};
+      handleAppShortcut(!!payload.ctrl, !!payload.shift, payload.key);
       return;
     }
     if (e.channel === 'mb-page-handler-error') {
@@ -903,6 +965,9 @@ function wireWebview(tab) {
       // 表现为「点网页内容区，收藏弹层不消失」。
       // 与右键菜单共用这个通道，两者都是「点外部关闭」的浮层。
       closeBookmarksPopover();
+      // 设置/历史/下载面板原本只在外壳 document 上监听点击，
+      // 点网页内容区时同样关不掉，这里一并收起（与外壳点击的行为保持一致）。
+      closePanelsOnOutsideClick();
       return;
     }
     if (e.channel === 'mb-context-menu') {
@@ -935,7 +1000,7 @@ function wireWebview(tab) {
     const u = e.url;
     if (!/^(https?:|about:|file:)/i.test(u)) {
       e.preventDefault();
-      if (window.electronAPI) window.electronAPI.openExternal(u);
+      openExternalUrl(u);
     }
   });
   // 透明模式：webview 就绪后按当前透明状态注入/保持页面背景透明 CSS
@@ -1287,10 +1352,14 @@ function renderBookmarks() {
 // ---------- 收藏夹弹出层（浏览 / 新建文件夹 / 收藏到此处 / 删除 / 重命名 / 编辑书签） ----------
 let _bmCurrent = null; // 当前查看的文件夹节点（树中真实引用）
 let _bmEditing = null; // 正在编辑的书签节点（树中真实引用）；null 表示不在编辑态
+// 文件夹新建/重命名的行内编辑态：{ node, parent, isNew }。
+// Electron 不支持 window.prompt（直接抛错），必须用行内输入框代替。
+let _bmFolderEdit = null;
 
 function openBookmarksPopover(folder) {
   _bmCurrent = folder || getBookmarks();
   _bmEditing = null;
+  _bmFolderEdit = null;
   renderBookmarksPopover();
   bmPopover.classList.remove('hidden');
 }
@@ -1299,6 +1368,7 @@ function closeBookmarksPopover() {
   bmPopover.classList.add('hidden');
   _bmCurrent = null;
   _bmEditing = null;
+  _bmFolderEdit = null;
 }
 
 /**
@@ -1328,13 +1398,17 @@ function renderBookmarksPopover() {
   const root = getBookmarks();
   const path = [];
   (function findPath(node, trail) {
-    if (node === _bmCurrent) return true;
+    if (node === _bmCurrent) {
+      // 命中时把沿途文件夹写回 path，否则子目录层级永远显示不出来，
+      // 用户也无法点面包屑回到上级。root 时 trail 为空，只显示根屑，符合预期。
+      path.push(...trail);
+      return true;
+    }
     for (const c of node.children || []) {
       if (c.type === 'folder' && findPath(c, trail.concat(c))) return true;
     }
     return false;
   })(root, []);
-  // findPath 在 _bmCurrent===root 时 path 为空（仅显示「全部书签」根屑），符合预期
   const rootCrumb = document.createElement('span');
   rootCrumb.className = 'bm-crumb';
   rootCrumb.textContent = '全部书签';
@@ -1353,6 +1427,10 @@ function renderBookmarksPopover() {
   });
 
   bmList.innerHTML = '';
+  // 新建文件夹时还没有树节点，编辑行放在列表开头。
+  if (_bmFolderEdit && _bmFolderEdit.isNew) {
+    bmList.appendChild(renderFolderEditRow());
+  }
   // 兜底：_bmCurrent 可能为 null —— 例如刚收藏完时 closeBookmarksPopover()
   // 已经把它清空，而后续又有代码来刷新面板（此前会直接抛
   // "Cannot read properties of null (reading 'children')"，整个刷新中断）。
@@ -1364,6 +1442,11 @@ function renderBookmarksPopover() {
     bmList.appendChild(empty);
   }
   _bmCurrent.children.forEach((node) => {
+    // 正在重命名这个文件夹 → 渲染行内输入框取代普通行
+    if (_bmFolderEdit && !_bmFolderEdit.isNew && _bmFolderEdit.node === node) {
+      bmList.appendChild(renderFolderEditRow());
+      return;
+    }
     // 正在编辑这一条 → 渲染编辑表单，取代普通行
     if (_bmEditing === node) {
       bmList.appendChild(renderBookmarkEditRow(node));
@@ -1639,24 +1722,71 @@ function renderBmHeader() {
   bmHeader.appendChild(btn);
 }
 
+/**
+ * 文件夹新建/重命名的行内编辑行。
+ * 不能再用 window.prompt：Electron 里它直接抛 "prompt() is and will not be supported"，
+ * 输入框根本不会出现，用户完全无法新建或重命名文件夹。
+ * 样式复用书签编辑行的 bm-edit-row / bm-edit-title / bm-edit-btn。
+ */
+function renderFolderEditRow() {
+  const row = document.createElement('div');
+  row.className = 'bm-row bm-edit-row';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'bm-edit-title';
+  input.maxLength = 80;
+  input.placeholder = '文件夹名称';
+  input.value = _bmFolderEdit.isNew ? '新建文件夹' : (_bmFolderEdit.node.title || '');
+
+  const save = document.createElement('button');
+  save.className = 'bm-edit-btn bm-edit-save';
+  save.textContent = '保存';
+  const cancel = document.createElement('button');
+  cancel.className = 'bm-edit-btn';
+  cancel.textContent = '取消';
+
+  const commit = () => {
+    if (!_bmFolderEdit) return;
+    const name = input.value.trim() || '新建文件夹';
+    if (_bmFolderEdit.isNew) {
+      _bmFolderEdit.parent.children.push({ type: 'folder', title: name, children: [] });
+    } else {
+      _bmFolderEdit.node.title = name;
+    }
+    _bmFolderEdit = null;
+    saveBookmarks(getBookmarks());
+    renderBookmarks();
+    renderBookmarksPopover();
+    toast('已保存');
+  };
+  const abort = () => {
+    _bmFolderEdit = null;
+    renderBookmarksPopover();
+  };
+
+  save.addEventListener('click', (e) => { e.stopPropagation(); commit(); });
+  cancel.addEventListener('click', (e) => { e.stopPropagation(); abort(); });
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); abort(); }
+  });
+
+  row.appendChild(input);
+  row.appendChild(save);
+  row.appendChild(cancel);
+  setTimeout(() => { input.focus(); input.select(); }, 0);
+  return row;
+}
+
 function bmAddFolder() {
-  const name = window.prompt('新建文件夹名称：', '新建文件夹');
-  if (name == null) return;
-  const t = name.trim() || '新建文件夹';
-  _bmCurrent.children.push({ type: 'folder', title: t, children: [] });
-  saveBookmarks(getBookmarks());
-  renderBookmarks();
+  _bmFolderEdit = { node: null, parent: _bmCurrent, isNew: true };
   renderBookmarksPopover();
 }
 
 function bmRenameFolder(folder) {
-  const name = window.prompt('文件夹名称：', folder.title);
-  if (name == null) return;
-  const t = name.trim();
-  if (!t) return;
-  folder.title = t;
-  saveBookmarks(getBookmarks());
-  renderBookmarks();
+  _bmFolderEdit = { node: folder, parent: _bmCurrent, isNew: false };
   renderBookmarksPopover();
 }
 
@@ -1798,6 +1928,21 @@ function addHistory(url, title) {
   h.unshift({ url, title: title || url, time: Date.now() });
   if (h.length > 200) h = h.slice(0, 200);
   localStorage.setItem('mb_history', JSON.stringify(h));
+}
+
+// did-navigate 早于 page-title-updated，写入时只能拿到上一个页面的标题。
+// 标题到达后回填对应 URL 的历史条目，否则历史面板里全是「新标签页」或旧站名。
+function updateHistoryTitle(url, title) {
+  if (!title || !/^https?:/i.test(url)) return;
+  try {
+    const h = getHistory();
+    const hit = h.find((x) => x.url === url);
+    if (!hit || hit.title === title) return;
+    hit.title = title;
+    localStorage.setItem('mb_history', JSON.stringify(h));
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function renderHistory() {
@@ -2550,6 +2695,17 @@ function showPanel(panel) {
   panel.classList.toggle('hidden');
 }
 
+// 网页内容区（guest 进程）左键点击时收起浮层面板。
+// 外壳区域的点击由各面板自己的 document click 监听处理；
+// <webview> 内的点击不冒泡到外壳，只能由 webview-preload 经
+// mb-page-pointer-down 转发到这里。三个面板共用 showPanel 做互斥，
+// 关闭行为也应一致（都只是加 hidden，不需要额外清理）。
+function closePanelsOnOutsideClick() {
+  [settingsPanel, historyPanel, downloadsPanel].forEach((p) => {
+    if (p) p.classList.add('hidden');
+  });
+}
+
 // 主进程设置的本地缓存：再次打开面板时先套用上次已知值，避免闪现错误的默认值
 let mainSettingsCache = null;
 
@@ -2561,13 +2717,18 @@ function applyMainSettings(s) {
   setAskSaveChk.checked = !!s.askWhereToSave;
 }
 
-// 下载目录 / 是否询问保存位置由主进程持久化，需异步拉取
+// 下载目录 / 是否询问保存位置由主进程持久化，需异步拉取。
+// 用递增序号丢弃迟到的旧响应：否则「打开面板 → 立刻改目录」时，
+// 旧请求返回会把刚改好的标签覆盖成旧路径。
+let mainSettingsSeq = 0;
 async function loadMainSettings() {
   if (!window.electronAPI || !window.electronAPI.getMainSettings) return;
   if (mainSettingsCache) applyMainSettings(mainSettingsCache);
   else setDlDirLabel.textContent = '读取中…'; // 首次打开时不要显示可能错误的默认值
+  const seq = ++mainSettingsSeq;
   try {
     const s = await window.electronAPI.getMainSettings();
+    if (seq !== mainSettingsSeq) return;
     mainSettingsCache = s;
     applyMainSettings(s);
   } catch (_) {
@@ -2580,8 +2741,10 @@ setDlChooseBtn.addEventListener('click', async () => {
   try {
     const dir = await window.electronAPI.chooseDownloadDir();
     if (dir) {
-      setDlDirLabel.textContent = dir;
-      setDlDirLabel.title = dir;
+      // 只改 DOM 会让下次 openSettingsPanel 用旧缓存闪回旧路径。
+      mainSettingsCache = { ...(mainSettingsCache || {}), downloadDir: dir };
+      setDlDirLabel.textContent = dir || '默认（下载）';
+      setDlDirLabel.title = dir || '系统默认「下载」目录';
     }
   } catch (_) {
     /* 用户取消或对话框不可用 */
@@ -2590,7 +2753,16 @@ setDlChooseBtn.addEventListener('click', async () => {
 
 setAskSaveChk.addEventListener('change', () => {
   if (window.electronAPI && window.electronAPI.setMainSetting) {
-    window.electronAPI.setMainSetting('askWhereToSave', setAskSaveChk.checked);
+    const value = setAskSaveChk.checked;
+    const previous = mainSettingsCache ? mainSettingsCache.askWhereToSave : false;
+    mainSettingsCache = { ...(mainSettingsCache || {}), askWhereToSave: value };
+    Promise.resolve(window.electronAPI.setMainSetting('askWhereToSave', value))
+      .catch(() => {
+        // 写盘失败：复选框和缓存一起回滚，避免界面显示与实际设置不一致。
+        setAskSaveChk.checked = !!previous;
+        if (mainSettingsCache) mainSettingsCache.askWhereToSave = !!previous;
+        toast('保存设置失败');
+      });
   }
 });
 
@@ -3045,35 +3217,39 @@ if (!restored) {
 // 快捷键：Ctrl/Cmd+Shift+T 重新打开最近关闭的标签
 // Ctrl/Cmd+T 新建标签；Ctrl/Cmd+W 关闭当前标签；Ctrl/Cmd+F 页面内查找
 // Ctrl/Cmd + 「+」/「-」/「0」：放大 / 缩小 / 重置缩放
-document.addEventListener('keydown', (e) => {
-  const ctrl = e.ctrlKey || e.metaKey;
-  if (!ctrl) return;
-  if (e.shiftKey && e.key.toLowerCase() === 't') {
-    e.preventDefault();
+//
+// <webview> 是独立 guest 进程，网页聚焦时宿主 document 收不到 keydown；
+// webview-preload 把上述组合键经 mb-shortcut 转发过来，统一调用本函数。
+// 宿主与 guest 共用一份逻辑，避免两边行为漂移。
+function handleAppShortcut(ctrl, shift, rawKey) {
+  if (!ctrl) return false;
+  const key = String(rawKey || '').toLowerCase();
+  if (shift && key === 't') {
     if (closedTabs.length) {
       const last = closedTabs.pop();
       createTab(last.url);
     }
-  } else if (!e.shiftKey && e.key.toLowerCase() === 't') {
-    e.preventDefault();
+  } else if (!shift && key === 't') {
     createTab(homeUrl());
-  } else if (!e.shiftKey && e.key.toLowerCase() === 'w') {
-    e.preventDefault();
+  } else if (!shift && key === 'w') {
     if (activeTabId) closeTab(activeTabId);
-  } else if (!e.shiftKey && e.key.toLowerCase() === 'f') {
-    e.preventDefault();
+  } else if (!shift && key === 'f') {
     if (findBar.classList.contains('hidden')) openFindBar();
     else closeFindBar();
-  } else if (e.key === '=' || e.key === '+') {
-    e.preventDefault();
+  } else if (key === '=' || key === '+') {
     changeZoom(ZOOM_STEP); // Ctrl/Cmd + 加号：放大
-  } else if (e.key === '-' || e.key === '_') {
-    e.preventDefault();
+  } else if (key === '-' || key === '_') {
     changeZoom(-ZOOM_STEP); // Ctrl/Cmd + 减号：缩小
-  } else if (!e.shiftKey && e.key === '0') {
-    e.preventDefault();
+  } else if (!shift && key === '0') {
     resetZoom(); // Ctrl/Cmd + 0：重置
+  } else {
+    return false;
   }
+  return true;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (handleAppShortcut(e.ctrlKey || e.metaKey, e.shiftKey, e.key)) e.preventDefault();
 });
 
 // Esc：仅在无框模式（含模式2）下退出（普通浏览的 Esc 仍用于关闭查找条等，不受影响）

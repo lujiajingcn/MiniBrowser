@@ -64,7 +64,9 @@ function buildInlineBlock() {
   const inner = exportsObj.slice(objStart + 1, objEnd);
   const names = [];
   // 顶层成员名（不处理嵌套对象/计算属性，本模块的导出都是简单标识符）
-  for (const m of inner.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*[:,]/gm)) {
+  // 末位成员后面没有逗号，直接跟 }；漏掉它会导致将来新增末位导出时
+  // 内联对象缺方法，而 --check 因为两侧「都按同一套漏掉的名字生成」不会报错。
+  for (const m of inner.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*(?=:|,|\})/gm)) {
     names.push(m[1]);
   }
   if (!names.length) throw new Error('video-detect.js 没有导出任何成员');
