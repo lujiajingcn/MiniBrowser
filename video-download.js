@@ -181,8 +181,11 @@ async function startVideoDownload(event, descriptor) {
   } catch (_) {
     /* 解析失败则不使用代理 */
   }
+  // await resolveProxy 期间用户可能已经取消（此时 rec.child 还是 null，
+  // cancelDownload 杀不到进程）。取消后绝不能再启动 ffmpeg，否则下载死灰复燃。
   const rec = active.get(id);
-  if (rec) rec.proxy = proxy;
+  if (!rec) return { ok: true, id, canceled: true };
+  rec.proxy = proxy;
 
   runFfmpeg(id);
   return { ok: true, id };
@@ -191,6 +194,27 @@ async function startVideoDownload(event, descriptor) {
 /** 当前是否已有可用的分段（用于判断能否续传）。 */
 function hasParts(rec) {
   return !!(rec && rec.parts && rec.parts.length);
+}
+
+/**
+ * 探测分段是否含音轨（静音源没有音轨，concat filter 硬编码 [i:a] 会失败）。
+ * ffprobe 通常与 ffmpeg 同目录；探测失败按「有音轨」处理，保持原有行为不误伤。
+ */
+function hasAudioStream(file) {
+  let ffprobe = 'ffprobe';
+  const ffmpeg = findFfmpeg();
+  if (ffmpeg && ffmpeg !== 'ffmpeg' && /ffmpeg(\.exe)?$/i.test(ffmpeg)) {
+    ffprobe = ffmpeg.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
+  }
+  try {
+    const r = require('node:child_process').spawnSync(ffprobe,
+      ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=index',
+        '-of', 'csv=p=0', String(file)],
+      { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    return r.status === 0 && !!(r.stdout || '').trim();
+  } catch (_) {
+    return true;
+  }
 }
 
 /** 删除单个分段文件（忽略失败）。 */
@@ -312,7 +336,9 @@ function runFfmpeg(id, opts) {
     rec.child = null;
     const cur = active.get(id);
     if (!cur) return; // 用户已取消：cancel 分支已删除记录
-    if (cur.stoppedByUser) return; // 暂停：pause 分支已结算
+    // 不能按 stoppedByUser 提前 return：暂停时它也置 true，会让下面的
+    // pendingPause 结算分支永远走不到（半成品不删、断点不回退）。
+    if (cur.state === 'cancelled') return;
 
     const exists = (() => {
       try {
@@ -407,7 +433,10 @@ function concatParts(id) {
   try {
     // 每段登记时已记下自己的 trimHead（与上一段重叠的秒数），拼接时用 inpoint 裁掉，
     // 否则重叠部分会让成品时长一段段虚长（实测 60s 源拼出 63s）。
-    built = buildConcatArgs(rec.parts, rec.savePath, { reencode: rec.triedReencode });
+    built = buildConcatArgs(rec.parts, rec.savePath, {
+      reencode: rec.triedReencode,
+      audioModes: rec.parts.map((p) => hasAudioStream(p.path))
+    });
   } catch (e) {
     // 成品都落不了盘，分段留着也没用（而且会变成下载目录里的垃圾）
     finishError(id, '拼接参数构造失败：' + (e && e.message), false);
@@ -440,12 +469,14 @@ function concatParts(id) {
     if (settled) return;
     settled = true;
     rec.merging = false;
+    if (!active.has(id) || rec.state === 'cancelled') return; // 取消时 kill 也算一次 error
     finishError(id, '合并分段失败：' + (err && err.message));
   });
   child.on('close', (code) => {
     if (settled) return;
     settled = true;
     rec.merging = false;
+    if (!active.has(id) || rec.state === 'cancelled') return; // 取消后的终止码不能当失败
     rec.child = null;
     const okSize = (() => {
       try {
@@ -591,6 +622,9 @@ function retryDownload(id) {
 function cancelDownload(id) {
   const rec = active.get(id);
   if (!rec) return;
+  // 必须先从 active 移除：ffmpeg 的 close 回调会把「记录还在」当作失败，
+  // 首次失败还会触发重编码重试 —— 点取消反而重新下载一遍。
+  active.delete(id);
   clearParts(rec);
   unlinkQuiet(rec.currentPath);
   unlinkQuiet(rec.savePath);

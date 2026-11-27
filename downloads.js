@@ -31,16 +31,30 @@ function sendDownloadEvent(win, payload) {
 }
 
 // 避免覆盖同名文件：xxx.txt → xxx (1).txt
+//
+// 用独占创建（'wx'）原子预留路径，而不是 existsSync 后再写：
+// 视频下载、保存网页都要先拿路径再异步落盘，两个任务并发时
+// existsSync 会同时看到「不存在」并拿到同一个路径，先完成的被后完成者覆盖。
 function uniquePath(dir, filename) {
   const ext = path.extname(filename);
   const base = path.basename(filename, ext) || 'download';
-  let candidate = path.join(dir, filename);
   let n = 1;
-  while (fs.existsSync(candidate)) {
-    candidate = path.join(dir, base + ' (' + n + ')' + ext);
-    n += 1;
+  while (n < 1000) {
+    const candidate = path.join(dir, base + (n === 1 ? '' : ' (' + n + ')') + ext);
+    try {
+      const fd = fs.openSync(candidate, 'wx');
+      fs.closeSync(fd);
+      return candidate;
+    } catch (e) {
+      if (e && e.code === 'EEXIST') {
+        n += 1;
+        continue;
+      }
+      // 目录不存在/无权限等：交给后续写入给出明确错误，不让路径分配自己崩掉。
+      return candidate;
+    }
   }
-  return candidate;
+  return path.join(dir, filename);
 }
 
 function setupDownloads() {

@@ -207,8 +207,16 @@ function isEraserActiveOnPage() {
   }
 }
 
+// mousedown 已删除顶层元素后，浏览器仍可能在共同祖先上派发 click，
+// 按坐标再命中一次会连删下层元素（一次点击删掉多层）。用短时间窗抑制这次 click。
+let suppressClickUntil = 0;
+
 function onClick(e) {
   if (!enabled) return;
+  if (Date.now() < suppressClickUntil) {
+    suppressClickUntil = 0;
+    return;
+  }
   const target = elementAt(e.clientX, e.clientY);
   if (!target) return;
   // 阻止默认行为与冒泡：避免误触发链接跳转 / 表单提交
@@ -240,6 +248,7 @@ function onMouseDown(e) {
   e.stopPropagation();
   try {
     target.remove();
+    suppressClickUntil = Date.now() + 500;
   } catch (_) {
     /* ignore */
   }

@@ -174,6 +174,12 @@ function buildConcatArgs(parts, outPath, options) {
   const asEntry = (p) =>
     typeof p === 'string' ? { path: p, trimHead: 0 } : { path: p.path, trimHead: p.trimHead || 0 };
 
+  // 静音视频（监控录制、无声 HLS）没有音轨。concat filter 硬编码 [i:a] 时
+  // ffmpeg 会报 "Stream specifier ':a' matches no streams"，已下好的分段全部作废。
+  // 调用方用 ffprobe 探测每段；全部无音轨时改走纯视频 concat。
+  const audioModes = Array.isArray(opts.audioModes) ? opts.audioModes : null;
+  const videoOnly = !!audioModes && audioModes.length > 0 && audioModes.every((m) => m === false);
+
   const args = ['-y'];
   list.forEach((p) => args.push('-i', String(asEntry(p).path)));
 
@@ -188,17 +194,24 @@ function buildConcatArgs(parts, outPath, options) {
     const head = trim > 0 ? 'trim=start=' + trim.toFixed(3) + ',' : 'trim=start=0,';
     const ahead = trim > 0 ? 'atrim=start=' + trim.toFixed(3) + ',' : 'atrim=start=0,';
     chains.push('[' + i + ':v]' + head + 'setpts=PTS-STARTPTS[' + v + ']');
-    chains.push('[' + i + ':a]' + ahead + 'asetpts=PTS-STARTPTS[' + a + ']');
-    labels.push('[' + v + '][' + a + ']');
+    if (videoOnly) {
+      labels.push('[' + v + ']');
+    } else {
+      chains.push('[' + i + ':a]' + ahead + 'asetpts=PTS-STARTPTS[' + a + ']');
+      labels.push('[' + v + '][' + a + ']');
+    }
   });
-  chains.push(
-    labels.join('') + 'concat=n=' + list.length + ':v=1:a=1[v][a]'
-  );
-  args.push('-filter_complex', chains.join(';'), '-map', '[v]', '-map', '[a]');
+  chains.push(videoOnly
+    ? labels.join('') + 'concat=n=' + list.length + ':v=1:a=0[v]'
+    : labels.join('') + 'concat=n=' + list.length + ':v=1:a=1[v][a]');
+  args.push('-filter_complex', chains.join(';'), '-map', '[v]');
+  if (!videoOnly) args.push('-map', '[a]');
 
   // filter 必须解码，所以无论分段原本是 -c copy 还是重编码产物，拼接统一重编码为
   // H.264 + AAC（opts.reencode 因此不再影响参数，保留仅为接口兼容）。
-  args.push('-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac', '-b:a', '192k');
+  args.push('-c:v', 'libx264', '-preset', 'veryfast');
+  if (videoOnly) args.push('-an');
+  else args.push('-c:a', 'aac', '-b:a', '192k');
   args.push('-sn', '-dn', '-movflags', '+faststart', outPath);
   return { args, listFile: '' };
 }
