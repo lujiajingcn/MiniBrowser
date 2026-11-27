@@ -578,6 +578,25 @@ body.full-transparent .toolbar .icon {
   -webkit-app-region: no-drag;
 }
 
+/* 顶部外壳三栏统一禁止文本选择，并都可拖拽移动窗口。
+   收藏夹栏以前漏了：在右侧空白处按住左键拖进网页时，外壳的收藏文字会先被选中，
+   选区随后贯穿 <webview>，表现为整个页面变蓝（连收藏项文字一起高亮）。 */
+.toolbar,
+#bookmarks-bar,
+.tab-bar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+#bookmarks-bar {
+  -webkit-app-region: drag;
+}
+#bookmarks-bar .bookmark,
+#bookmarks-bar button,
+#bookmarks-bar .bm-label,
+#bookmarks-bar .bm-del {
+  -webkit-app-region: no-drag;
+}
+
 .tab {
   display: flex;
   align-items: center;
