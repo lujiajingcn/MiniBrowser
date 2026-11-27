@@ -1,5 +1,10 @@
 'use strict';
 
+// 终端输出必须先于一切加载：下面的 ELECTRON_RUN_AS_NODE 自愈分支在
+// require('electron') 之前就会用到 writeErrLine。若留到第 111 行才声明，
+// 该 catch 会在 const 暂时性死区里访问它，异常处理自身抛 ReferenceError。
+const { writeLine, writeErrLine } = require('./console-encoding');
+
 /**
  * ---------- 崩溃诊断 ----------
  *
@@ -81,8 +86,11 @@ if (process.env.ELECTRON_RUN_AS_NODE === '1') {
   const { execPath } = process;
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
+  // 透传用户参数（如 electron . https://example.com）：否则自愈重启后
+  // 打开的会是默认首页，指定 URL / 开关全部丢失。过滤掉应用目录本身避免重复。
+  const extraArgs = process.argv.slice(2).filter((a) => a && a !== __dirname && a !== '.');
   try {
-    const child = spawn(execPath, [__dirname], {
+    const child = spawn(execPath, [__dirname, ...extraArgs], {
       detached: true,
       windowsHide: true,
       stdio: 'ignore',
@@ -108,7 +116,6 @@ const { setupSettingsIpc } = require('./settings-store');
 const { setupVideoDownloads } = require('./video-download');
 const { setupSavePage } = require('./save-page');
 const { buildNetscapeBookmarks } = require('./bookmarks-io');
-const { writeLine, writeErrLine } = require('./console-encoding');
 const { setupWindowDrag } = require('./window-drag');
 
 /**
@@ -363,11 +370,27 @@ function setupShowServer() {
         let pending = wins.length;
         let okCount = 0;
         let detail = '';
-        if (!pending) {
-          socket.write('err\n');
+        let replied = false;
+        let timer = null;
+        const finish = (ok) => {
+          if (replied) return;
+          replied = true;
+          if (timer) clearTimeout(timer);
+          writeLine('[show-server] 恢复普通视图：' + okCount + '/' + wins.length +
+            ' 个窗口成功' + (detail ? '（' + detail + '）' : ''));
+          socket.write(ok ? 'ok\n' : 'err\n');
           socket.end();
+        };
+        if (!pending) {
+          finish(false);
           return;
         }
+        // 页面同步死循环或 webContents 尚未加载完时，executeJavaScript 可能永不 settle。
+        // 这个命令本身就是「界面看不见时的逃生开关」，绝不能把自己挂死：超时按失败回复。
+        timer = setTimeout(() => {
+          detail += 'timeout;';
+          finish(false);
+        }, 5000);
         wins.forEach((w) => {
           Promise.resolve()
             .then(() => w.webContents.executeJavaScript(RESET_VIEW_JS))
@@ -379,11 +402,8 @@ function setupShowServer() {
               detail += 'error:' + ((e && e.message) || String(e)) + ';';
             })
             .then(() => {
-              if (--pending > 0) return;
-              writeLine('[show-server] 恢复普通视图：' + okCount + '/' + wins.length +
-                ' 个窗口成功' + (detail ? '（' + detail + '）' : ''));
-              socket.write(okCount ? 'ok\n' : 'err\n');
-              socket.end();
+              if (--pending > 0 || replied) return;
+              finish(okCount > 0);
             });
         });
         return;
@@ -498,7 +518,14 @@ if (!gotSingleInstanceLock) {
       w.focus();
       shown++;
     }
-    if (shown) writeLine('[main] 已有实例已显示窗口');
+    if (shown) {
+      writeLine('[main] 已有实例已显示窗口');
+    } else {
+      // macOS 关掉唯一窗口后进程仍在后台：此时再启动走的是 second-instance，
+      // 没有任何窗口可显示。与 activate 分支保持一致，重建一个窗口。
+      writeLine('[main] 已有实例无窗口，正在创建新窗口');
+      createWindow(false);
+    }
   });
 }
 

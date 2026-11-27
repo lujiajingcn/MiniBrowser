@@ -32,8 +32,17 @@ const CMD = (process.argv[2] || 'show').toLowerCase();
 // normal 是「恢复普通视图」的开关，reset 作为同义词，避免记不清具体单词。
 const IS_NORMAL = CMD === 'normal' || CMD === 'reset';
 
+let timedOut = false;
 const sock = net.connect(PORT, HOST, () => {
   sock.write(CMD + '\n');
+});
+
+// 端口可能被「接受连接但不响应」的程序占用，服务端 normal 命令也可能卡在页面脚本上。
+// 客户端必须自己设超时，否则命令行永久挂起、用户无法判断发生了什么。
+sock.setTimeout(15000, () => {
+  timedOut = true;
+  writeLine('连接超时：MiniBrowser 服务在 15 秒内未响应（端口 ' + PORT + '）。');
+  sock.destroy();
 });
 
 sock.setEncoding('utf8');
@@ -44,6 +53,7 @@ sock.on('data', (chunk) => {
 });
 
 sock.on('close', () => {
+  if (timedOut) return; // 超时提示已经打印，不要再报一次「服务未运行」
   const t = resp.trim();
   if (CMD === 'status') {
     if (!t || t === 'err') {
@@ -87,6 +97,7 @@ sock.on('close', () => {
 });
 
 sock.on('error', () => {
+  if (timedOut) return;
   writeLine('连接失败：MiniBrowser 服务未运行（端口 ' + PORT + '）。');
   writeLine('');
   writeLine('说明：应用没在跑，或者启动后立刻退出了。');

@@ -4,13 +4,26 @@ const { contextBridge, shell, ipcRenderer } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+// 允许交给系统处理器的协议白名单。
+// 【为什么必须在这里校验】renderer.js 会把网页里 new-window / ipc-message /
+// will-navigate 带来的 URL 中「非 http(s)/about/file」的部分转交给本方法，
+// 也就是说入参是**网页可控**的。shell.openExternal 会直接调用系统默认处理器，
+// 若不加白名单，恶意网页可用任意注册协议拉起本地程序（Electron 安全基线明令禁止）。
+// http(s) 由应用自身开新标签，不会走到这里；这里只放行无副作用的通信协议。
+const EXTERNAL_URL_RE = /^(https?:\/\/|mailto:|tel:)/i;
+
 /**
- * 受控的桥接层：只暴露两个安全方法给渲染进程，
+ * 受控的桥接层：只暴露受控方法给渲染进程，
  * 不暴露完整的 Node / Electron 能力，避免任意网页篡改宿主。
  */
 contextBridge.exposeInMainWorld('electronAPI', {
-  // 用系统默认浏览器打开外部协议（mailto、非 http(s) 等）
-  openExternal: (url) => shell.openExternal(url),
+  // 用系统默认处理器打开外部协议；非白名单协议直接拒绝。
+  openExternal: (url) => {
+    if (typeof url !== 'string') return false;
+    const target = url.trim();
+    if (!EXTERNAL_URL_RE.test(target)) return false;
+    return shell.openExternal(target);
+  },
   platform: process.platform,
   // 供 <webview> 使用的内部 preload 脚本 file:// URL
   getWebviewPreloadPath: () => pathToFileURL(path.join(__dirname, 'webview-preload.js')).href,
