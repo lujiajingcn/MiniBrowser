@@ -110,6 +110,26 @@ if (process.env.ELECTRON_RUN_AS_NODE === '1') {
 const { app, BrowserWindow, webContents, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+
+/**
+ * ---------- 应用身份：任务栏名称 / 图标 ----------
+ *
+ * 不设置 AppUserModelID 时，Windows 把窗口归到系统默认的 Electron 组：
+ * 任务栏右键菜单显示「Electron」并配 Electron 原生图标，
+ * 即使 exe 已被 rcedit 注入图标/版本信息也一样（显示名取自 AppUserModelID）。
+ * 必须在 app ready 之前调用，否则任务栏分组已定型。
+ *
+ * 窗口图标单独指定：exe 图标只影响「任务栏按钮」，
+ * Alt+Tab / 任务视图 / 窗口本身还要靠 BrowserWindow 的 icon。
+ * 打包版图标随 extraResources 放到 resources/icon.ico（asar 内路径不能
+ * 直接喂给 nativeImage），开发版直接用 build/icon.ico。
+ */
+const APP_USER_MODEL_ID = 'com.minibrowser.app';
+app.setName('MiniBrowser');
+if (app.setAppUserModelId) app.setAppUserModelId(APP_USER_MODEL_ID);
+const APP_ICON = app.isPackaged
+  ? path.join(process.resourcesPath, 'icon.ico')
+  : path.join(__dirname, 'build', 'icon.ico');
 const net = require('node:net');
 const { setupDownloads } = require('./downloads');
 const { setupSettingsIpc } = require('./settings-store');
@@ -153,6 +173,7 @@ function createWindow(offscreen) {
     minWidth: 640,
     minHeight: 480,
     show: !offscreen,
+    icon: APP_ICON, // 任务栏/Alt+Tab 显示应用图标，而非 Electron 默认图标
     // transparent:true 让窗口本身支持透明合成（透明模式下桌面可透出）。
     // 注意：开启 transparent 时必须把 backgroundColor 设为透明色，否则整窗仍不透明。
     // 普通模式下各部件（工具栏/网页）自带不透明背景，外观不变，仅“透明模式”才会真正透出桌面。
@@ -617,6 +638,7 @@ ipcMain.on('mb-create-window', (event, url) => {
   const w = new BrowserWindow({
     width: 1280,
     height: 820,
+    icon: APP_ICON, // 与主窗口一致：任务栏显示应用图标
     transparent: true, // 与主窗口保持一致：支持透明模式
     backgroundColor: '#00000000',
     frame: false, // 与主窗口保持一致：无边框
