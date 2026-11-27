@@ -333,7 +333,9 @@ let _showServerStarted = false;
  * show.js 的 normal 命令走本地服务端口，由主进程在渲染层执行这段脚本，
  * 相当于一个「无论界面是否可见都能用」的逃生开关。
  *
- * 顺序：先撤完全透明再撤透明（完全透明依赖透明），最后撤两种无框模式。
+ * 顺序：先用 setTransparentLevel(0) 一次性把透明档位归零
+ * （普通透明与完全透明是同一根轴上的两档，分两次关会留下半吊子状态），
+ * 最后撤两种无框模式。
  */
 const RESET_VIEW_JS = `(function () {
   function off(name) {
@@ -346,13 +348,23 @@ const RESET_VIEW_JS = `(function () {
     }
   }
   var results = [
+    (function () {
+      try {
+        if (typeof window.setTransparentLevel !== 'function') return 'setTransparentLevel:missing';
+        window.setTransparentLevel(0);
+        return 'setTransparentLevel:ok';
+      } catch (e) {
+        return 'setTransparentLevel:error:' + ((e && e.message) || String(e));
+      }
+    })(),
     off('applyFullTransparent'),
     off('applyTransparent'),
     off('applyFrameless2'),
     off('applyFrameless'),
   ];
   try {
-    ['mb_full_transparent', 'mb_transparent', 'mb_frameless2', 'mb_frameless']
+    ['mb_full_transparent', 'mb_transparent', 'mb_full_auto_transparent',
+     'mb_frameless2', 'mb_frameless']
       .forEach(function (k) { localStorage.setItem(k, '0'); });
   } catch (_) { /* 存储不可用时忽略，class 已改，当前窗口可见即可 */ }
   return results.join(',');

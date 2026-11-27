@@ -194,6 +194,38 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* ---------- 工具栏图标：统一尺寸 / 线宽 / 着色 ---------- */
+/* sprite 自身不占布局；图标全部从 currentColor 取色，主题切换无需换图。 */
+.icon-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.toolbar .icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* 透明 / 完全透明模式下工具栏底色调没了，图标直接浮在桌面上。
+   两套主题的 --toolbar-fg 都是浅色（工具栏本身就是深色条），
+   所以这里固定用较重的暗色描边 + 很淡的亮色外圈：
+   浅色桌面上靠暗边看清图标，深色桌面上靠亮边兜底。
+   drop-shadow 只作用于图标笔画，不会给按钮重新画出底色。 */
+body.transparent .toolbar .icon,
+body.full-transparent .toolbar .icon {
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35)) drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.95));
+}
+
 .toolbar input {
   -webkit-app-region: no-drag;
 }
@@ -243,7 +275,7 @@ body {
 /* ---------- 橡皮擦按钮（可切换的选中态） ---------- */
 /* 用 aria-pressed 表达选中状态：语义上比自定义 class 更准确，
    也让「按下」与「激活」在读屏软件里能被正确区分。 */
-.eraser-btn svg {
+.eraser-btn .icon {
   display: block;
   pointer-events: none; /* 点击落在 button 上而非 svg，保证拖拽区判定稳定 */
 }
@@ -259,7 +291,7 @@ body {
 }
 
 /* ---------- 去粗体按钮 ---------- */
-.debold-btn svg {
+.debold-btn .icon {
   display: block;
   pointer-events: none; /* 点击落在 button 上而非 svg */
 }
@@ -276,7 +308,7 @@ body {
 }
 
 /* ---------- 图钉（钉在桌面 / 窗口置顶） ---------- */
-.pin-btn svg {
+.pin-btn .icon {
   display: block;
   pointer-events: none; /* 点击落在 button 上而非 svg */
   transform: rotate(-35deg);
@@ -284,7 +316,7 @@ body {
 }
 
 /* 钉住时：图钉「立起来」，并高亮 */
-.pin-btn[aria-pressed='true'] svg {
+.pin-btn[aria-pressed='true'] .icon {
   transform: rotate(0deg);
 }
 
@@ -319,6 +351,14 @@ body {
   opacity: 0.85;
   /* 与 favicon 一样不可压缩，否则窄窗口下锁图标会被压变形 */
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.url-bar .lock .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .url-bar .favicon {
@@ -1050,6 +1090,20 @@ body {
 }
 
 /* ---------- 右键菜单 ---------- */
+/* 浮层必须显式声明 no-drag：外壳工具栏/标签栏是 -webkit-app-region: drag，
+   菜单弹到这些区域上方时，不声明的话物理点击可能被当成拖拽窗口，
+   表现为「只有压在拖拽区上的那一项点了没反应」。 */
+.context-menu,
+.zoom-menu,
+.history-panel,
+.downloads-panel,
+.settings-panel,
+.bm-popover,
+.video-picker,
+.toast {
+  -webkit-app-region: no-drag;
+}
+
 .context-menu {
   position: absolute;
   min-width: 180px;
@@ -1847,6 +1901,23 @@ body.full-transparent .history-list li:hover,
 body.full-transparent .dl-actions button:hover,
 body.full-transparent .bm-row-main:hover {
   background: rgba(127, 127, 127, 0.18);
+}
+
+/* 地址栏自身的底色：.url-bar 用 --urlbar-bg 画深色胶囊，#go 用 --accent 画蓝色圆按钮。
+   两者是 .toolbar 的子元素，清掉父级背景（上面的 .toolbar 规则）并不会影响它们，
+   所以必须单独清，否则完全透明时地址栏仍是一块显眼的色块。 */
+body.full-transparent .url-bar,
+body.full-transparent .url-bar #go {
+  background: transparent !important;
+  background-image: none !important;
+}
+/* #go 的文字原本用 --on-accent（亮色），透明底色下会消失在浅色桌面上，
+   改用与其他工具栏图标一致的前景色；hover 反馈保留，方便定位按钮。 */
+body.full-transparent .url-bar #go {
+  color: var(--toolbar-fg) !important;
+}
+body.full-transparent .url-bar #go:hover {
+  background: var(--toolbar-hover) !important;
 }
 
 /* 外壳侧的图片处理：favicon 属于「当前页面的图形信息」，与「只保留文字」一致，隐藏之。

@@ -90,6 +90,18 @@ newTabBtn.addEventListener('click', () => createTab(homeUrl()));
 tabBar.appendChild(newTabBtn);
 
 // ---------- 工具函数 ----------
+/**
+ * 切换按钮里的图标 symbol。工具栏统一用 <svg class="icon"><use href="#i-xxx">，
+ * 状态变化只换 href，不改按钮尺寸、线宽和着色规则（currentColor）。
+ */
+function setButtonIcon(el, symbol) {
+  if (!el) return;
+  el.innerHTML =
+    '<svg class="icon" aria-hidden="true" focusable="false"><use href="#' +
+    symbol +
+    '"></use></svg>';
+}
+
 function normalizeUrl(input) {
   const url = (input || '').trim();
   if (!url) return '';
@@ -133,7 +145,7 @@ function hideFavicon() {
 
 function updateLock(url) {
   const secure = /^https:/i.test(url);
-  lockEl.textContent = secure ? '🔒' : '🔓';
+  setButtonIcon(lockEl, secure ? 'i-lock' : 'i-unlock');
   lockEl.title = secure ? '安全连接 (HTTPS)' : '未加密连接';
 }
 
@@ -220,7 +232,7 @@ function setActiveTab(id) {
   // did-start/stop-loading 只更新活动标签的加载条，后台标签的状态变化不会反映到工具栏。
   // 切标签时必须按新标签的 loading 状态补齐，否则会显示上一个标签的转圈/✕。
   loadingBar.classList.toggle('active', !!t.loading);
-  reloadBtn.textContent = t.loading ? '✕' : '⟳';
+  setButtonIcon(reloadBtn, t.loading ? 'i-stop' : 'i-reload');
   // 查找条开着时切标签：清空旧页计数并对新页重新查找，
   // 否则数字还是上一页的，而新页面没有任何高亮。
   if (findBar.classList.contains('hidden')) stopFindOn(t.webview);
@@ -324,6 +336,23 @@ function hideContextMenu() {
  *            下方放不下时翻到锚点上方。
  * @param {number} [opts.anchorTop] 'below' 模式下锚点矩形的上沿（用于向上翻转）
  */
+/**
+ * 顶部外壳（工具栏 / 书签栏 / 标签栏）中仍可见部分的下沿。
+ * 这些区域是 -webkit-app-region: drag，浮层压在上面时物理点击可能拖窗口。
+ * 无框模式下它们被隐藏，返回 0。
+ */
+function getVisibleShellBottom() {
+  let bottom = 0;
+  ['.toolbar', '#bookmarks-bar', '#tab-bar'].forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return;
+    bottom = Math.max(bottom, el.getBoundingClientRect().bottom);
+  });
+  return bottom;
+}
+
 function positionContextMenu(el, x, y, opts) {
   const o = opts || {};
   const margin = 6;
@@ -361,6 +390,12 @@ function positionContextMenu(el, x, y, opts) {
     if (top + h + margin > vh) top = y - h; // 下方放不下 → 向上弹
   }
   if (top < margin) top = margin; // 上方也放不下 → 贴顶
+
+  // 避开顶部拖拽区：右键点靠近窗口上沿时，菜单会盖在工具栏/标签栏上。
+  // 截图实测：只有落在那一块上的菜单项点不动，其它项正常 —— 是位置问题，
+  // 不是菜单项的事件绑定问题。整体推到外壳下方即可彻底避开。
+  const shellBottom = getVisibleShellBottom();
+  if (top < shellBottom + margin) top = shellBottom + margin;
 
   // ---- 兜底：菜单仍会超出底边 ----
   // 两种情况：
@@ -644,6 +679,28 @@ function isFullTransparent() {
   return document.body.classList.contains('full-transparent');
 }
 
+/**
+ * 当前所处的透明档位。
+ *   0 = 普通视图
+ *   1 = 普通透明模式（窗口/页面背景透明，页面元素仍保留自己的底色）
+ *   2 = 完全透明模式（在普通透明基础上清掉所有元素底色，只留文字）
+ *
+ * 【为什么要单独算一个档位，而不是直接看 transparent 类】
+ * 完全透明在**实现上**依附普通透明 —— 外壳 body 的底色是靠 .transparent
+ * 清掉的（见 styles.css 里 body.transparent{background:transparent}），
+ * 所以进入完全透明时 transparent 类会顺带被打开。
+ * 但对外而言它们是同一根轴上的两个**互斥档位**：此刻生效的是完全透明，
+ * 普通透明并没有被单独开启。若菜单文案直接取 isTransparent()，
+ * 点一次「进入完全透明模式」，旁边那项就会自己翻成「退出透明模式」——
+ * 用户从没开过它，却被告知它已开启，点它还会把完全透明一起拽下来。
+ * 因此菜单文案一律按档位给（与上面「无框模式 / 无框模式2」的处理方式一致）。
+ */
+function transparentLevel() {
+  if (isFullTransparent()) return 2;
+  if (isTransparent()) return 1;
+  return 0;
+}
+
 // 对单个 webview 注入/移除透明 CSS。
 function applyPageTransparent(webview, on, force) {
   setInjectedCss(webview, 'transparent', TRANSPARENT_PAGE_CSS, on, force);
@@ -686,38 +743,139 @@ function applyPageDebold(webview, on, force) {
   }
 }
 
-function applyTransparent(on) {
-  document.body.classList.toggle('transparent', !!on);  try {
-    localStorage.setItem('mb_transparent', on ? '1' : '0');
-  } catch (_) {
-    /* 隐私模式等 localStorage 不可用时忽略 */
-  }
-  tabs.forEach((t) => {
-    if (t.webview) applyPageTransparent(t.webview, !!on);
-  });
-}
+/**
+ * 应用某一透明档位的全部副作用：body class + 持久化 + 页面 CSS 注入。
+ *
+ * @param {number} level 0=普通视图 1=普通透明 2=完全透明
+ */
+function applyTransparentLevel(level) {
+  const lv = level === 2 ? 2 : (level === 1 ? 1 : 0);
+  const plain = lv >= 1;
+  const full = lv === 2;
 
-function toggleTransparent() {
-  applyTransparent(!isTransparent());
-}
+  document.body.classList.toggle('transparent', plain);
+  document.body.classList.toggle('full-transparent', full);
 
-// 完全透明模式：在透明模式基础上把所有元素的背景清掉。
-// 两者不是互斥关系 —— 完全透明必然需要窗口本身透明（transparent:true），
-// 所以进入完全透明时先确保透明模式开着；退出完全透明时只撤销加强的 CSS，
-// 透明模式本身保持不变（用户可能还想要「窗口透明但元素有底色」的状态）。
-function applyFullTransparent(on) {
-  const next = !!on;
-  document.body.classList.toggle('full-transparent', next);
   try {
-    localStorage.setItem('mb_full_transparent', next ? '1' : '0');
+    localStorage.setItem('mb_transparent', plain ? '1' : '0');
+    localStorage.setItem('mb_full_transparent', full ? '1' : '0');
   } catch (_) {
     /* 隐私模式等 localStorage 不可用时忽略 */
   }
-  // 完全透明依赖透明模式：进入时若透明模式没开，先把它打开
-  if (next && !isTransparent()) applyTransparent(true);
+
   tabs.forEach((t) => {
-    if (t.webview) applyPageFullTransparent(t.webview, next);
+    if (!t.webview) return;
+    // 两套 CSS 各自独立管理 key：完全透明档位下两套都要注入
+    //（普通透明那套清 html/body 底色，完全透明那套清所有元素底色）。
+    applyPageTransparent(t.webview, plain);
+    applyPageFullTransparent(t.webview, full);
   });
+}
+
+/**
+ * 切换透明档位。
+ *
+ * 【档位模型，取代原来「两个独立开关」的做法】
+ * 普通透明与完全透明是**同一根轴上的两档**，不是两个独立开关：
+ * 完全透明 = 普通透明 + 清掉所有元素底色（只留文字）。
+ * 所以进入完全透明必然连带把普通透明也打开 —— 外壳 body 的底色是靠
+ * .transparent 清掉的（styles.css 里 body.transparent{background:transparent}），
+ * 页面背景同理。
+ *
+ * 但对外只应呈现「当前生效的是哪一档」。早先把菜单文案直接取
+ * isTransparent()，于是点一次「进入完全透明模式」，旁边那项就自己
+ * 翻成「退出透明模式」—— 用户从没单独开过普通透明，却被告知它已开启，
+ * 点它还会把完全透明一起拽下来。现在菜单一律按 transparentLevel() 给文案。
+ *
+ * @param {number} level 0=普通视图 1=普通透明 2=完全透明
+ * @param {object} [opts] keepAuto=true 时沿用已持久化的「普通透明是否自动开启」
+ *   标记（启动恢复用，否则会因透明类已先恢复而误判）
+ */
+function setTransparentLevel(level, opts) {
+  const lv = level === 2 ? 2 : (level === 1 ? 1 : 0);
+  const wasTransparent = isTransparent();
+  const wasFull = isFullTransparent();
+
+  if (lv === 2) {
+    // 进入完全透明：记下普通透明是不是用户自己开的。
+    // 不是（原本没开）→ 退出完全透明时直接回普通视图；
+    // 是（原本就开着）→ 退出后回到普通透明，保持用户原本的选择。
+    let autoOn = false;
+    try {
+      autoOn = localStorage.getItem('mb_full_auto_transparent') === '1';
+    } catch (_) {
+      /* 隐私模式下 localStorage 不可用时按「非自动」处理 */
+    }
+    if (!(opts && opts.keepAuto)) autoOn = !wasTransparent;
+    applyTransparentLevel(2);
+    try {
+      localStorage.setItem('mb_full_auto_transparent', autoOn ? '1' : '0');
+    } catch (_) {
+      /* ignore */
+    }
+    return;
+  }
+
+  applyTransparentLevel(lv);
+  // 离开完全透明时清掉自动标记；普通透明档位之间的切换不动它
+  //（启动恢复时要靠它还原「退出完全透明后回哪一档」）。
+  if (wasFull && lv < 2) {
+    try {
+      localStorage.setItem('mb_full_auto_transparent', '0');
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * 兼容入口：开关「普通透明」这一档。
+ * on=true 至少保证普通透明开着（在完全透明档位下则保持完全透明不变）。
+ * on=false 退出普通透明 —— 完全透明依赖它，所以一并退回普通视图。
+ */
+function applyTransparent(on) {
+  if (on) {
+    if (transparentLevel() >= 1) return;
+    setTransparentLevel(1);
+  } else {
+    setTransparentLevel(0);
+  }
+}
+
+/**
+ * 「透明模式」这一项的动作。
+ *
+ * 处于完全透明档位时，这一项的文案是「进入透明模式」，
+ * 语义是**降一档**到普通透明，而不是把两个模式一起关掉
+ * （与同一菜单里「无框模式 / 无框模式2」互斥档位的处理方式一致）。
+ */
+function toggleTransparent() {
+  const lv = transparentLevel();
+  if (lv === 2) {
+    setTransparentLevel(1);
+    return;
+  }
+  setTransparentLevel(lv === 1 ? 0 : 1);
+}
+
+/**
+ * 兼容入口：开关「完全透明」这一档。
+ * 退出时回到用户原本显式选择的那一档：
+ * 原本只开了完全透明 → 回普通视图；原本也开着普通透明 → 回普通透明。
+ */
+function applyFullTransparent(on, opts) {
+  if (on) {
+    setTransparentLevel(2, opts);
+    return;
+  }
+  if (!isFullTransparent()) return; // 本来就没开完全透明，无事可做
+  let autoOn = false;
+  try {
+    autoOn = localStorage.getItem('mb_full_auto_transparent') === '1';
+  } catch (_) {
+    /* ignore */
+  }
+  setTransparentLevel(autoOn ? 0 : 1);
 }
 
 function toggleFullTransparent() {
@@ -758,11 +916,15 @@ function showPageContextMenu(x, y) {
   // 「进入无框模式2」紧跟在「进入无框模式」下方
   const on2 = isFrameless2();
   item(on2 ? '退出无框模式2' : '进入无框模式2', toggleFrameless2);
-  const onT = isTransparent();
-  item(onT ? '退出透明模式' : '进入透明模式', toggleTransparent);
+  // 透明模式 / 完全透明模式：同一根轴上的两档，文案按「当前生效的是哪一档」给。
+  // 不能直接用 isTransparent() —— 完全透明会连带打开普通透明（外壳 body 底色
+  // 依赖 .transparent），直接用它会让「进入透明模式」在点了「进入完全透明模式」
+  // 之后自己翻成「退出透明模式」，而用户从没单独开过普通透明。
+  const lvT = transparentLevel();
+  item(lvT === 1 ? '退出透明模式' : '进入透明模式', toggleTransparent);
   // 「进入完全透明模式」紧跟在「进入透明模式」下方
-  const onFT = isFullTransparent();
-  item(onFT ? '退出完全透明模式' : '进入完全透明模式', toggleFullTransparent);
+  const lvFT = transparentLevel() === 2;
+  item(lvFT ? '退出完全透明模式' : '进入完全透明模式', toggleFullTransparent);
   divider();
   item('刷新', () => {
     const t = activeTab();
@@ -849,14 +1011,14 @@ function wireWebview(tab) {
     tab.loading = true;
     if (tab.id === activeTabId) {
       loadingBar.classList.add('active');
-      reloadBtn.textContent = '✕';
+      setButtonIcon(reloadBtn, 'i-stop');
     }
   });
   wv.addEventListener('did-stop-loading', () => {
     tab.loading = false;
     if (tab.id === activeTabId) {
       loadingBar.classList.remove('active');
-      reloadBtn.textContent = '⟳';
+      setButtonIcon(reloadBtn, 'i-reload');
     }
   });
   wv.addEventListener('did-navigate', (e) => {
@@ -1868,8 +2030,8 @@ function toggleBookmark() {
 function refreshBookmarkStar() {
   const url = urlInput.value;
   const marked = !!url && !!window.BookmarksIO.findBookmarkByUrl(getBookmarks(), url);
-  // 两种状态：实心 ★（已收藏）/ 中空 ☆（未收藏），并同步提示文字与可访问性标签
-  bookmarkBtn.textContent = marked ? '★' : '☆';
+  // 两种状态：实心星（已收藏）/ 中空星（未收藏），并同步提示文字与可访问性标签
+  setButtonIcon(bookmarkBtn, marked ? 'i-star-filled' : 'i-star');
   bookmarkBtn.title = marked ? '取消收藏' : '收藏当前页';
   bookmarkBtn.setAttribute('aria-label', marked ? '取消收藏' : '收藏当前页');
 }
@@ -3180,17 +3342,18 @@ try {
   /* ignore */
 }
 
-// 恢复上次的透明模式状态（body.transparent 类先置好，之后各 webview 在 dom-ready 时注入透明 CSS）
+// 恢复上次的透明档位（普通透明 / 完全透明）。
+// 必须一次性恢复，不能分两步「先恢复普通透明、再恢复完全透明」：
+// 分两步的话，前一步会把 mb_full_transparent 覆写成 '0'，
+// 后一步就读不到「上次停在完全透明」这个信息了。
 try {
-  if (localStorage.getItem('mb_transparent') === '1') applyTransparent(true);
-} catch (_) {
-  /* 隐私模式下 localStorage 不可用时忽略 */
-}
-
-// 恢复上次的完全透明模式状态。必须在透明模式恢复之后 ——
-// 完全透明依赖透明模式（窗口本身要透明），applyFullTransparent 内部也会确保这一点。
-try {
-  if (localStorage.getItem('mb_full_transparent') === '1') applyFullTransparent(true);
+  if (localStorage.getItem('mb_full_transparent') === '1') {
+    // keepAuto=true：沿用持久化的「普通透明是否为进入完全透明而自动打开」标记。
+    // 若在这里重新判定，透明类已经先恢复，标记会被误判成 0，重启后退出就要点两次。
+    setTransparentLevel(2, { keepAuto: true });
+  } else if (localStorage.getItem('mb_transparent') === '1') {
+    setTransparentLevel(1);
+  }
 } catch (_) {
   /* ignore */
 }
