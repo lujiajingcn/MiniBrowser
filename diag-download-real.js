@@ -10,8 +10,14 @@ const { app, BrowserWindow, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const OUT_DIR = path.join(__dirname, '.tmp-realtest', 'out');
-const RESULT = path.join(__dirname, 'dl-real-result.json');
+// 独立 userData 与临时输出目录：诊断不能在源码树留下下载文件，
+// 也不能覆盖真实下载设置。
+const os = require('node:os');
+app.setPath('userData', path.join(os.tmpdir(), 'minibrowser-diag-download-' + process.pid));
+process.env.MB_USER_DATA_DIR = app.getPath('userData');
+
+const OUT_DIR = path.join(os.tmpdir(), 'minibrowser-diag-download-' + process.pid, 'out');
+const RESULT = path.join(OUT_DIR, 'dl-real-result.json');
 
 function out(o) { try { fs.writeFileSync(RESULT, JSON.stringify(o, null, 2)); } catch (_) {} }
 function finish(o, code) { out(o); setTimeout(() => app.exit(code || 0), 200); }

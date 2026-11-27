@@ -20,6 +20,10 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 
+// 独立 userData：诊断会写 mb_bookmarks，不能污染真实 profile。
+const os = require('node:os');
+app.setPath('userData', path.join(os.tmpdir(), 'minibrowser-diag-bookmark-edit-' + process.pid));
+
 const ROOT = __dirname;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 

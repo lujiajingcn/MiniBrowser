@@ -17,6 +17,11 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 
+// 独立 userData：诊断脚本清 localStorage / 写测试书签时不能碰到真实 profile，
+// 也不要与其他诊断脚本共用状态导致假阴性。
+const os = require('node:os');
+app.setPath('userData', path.join(os.tmpdir(), 'minibrowser-diag-bookmark-popover-' + process.pid));
+
 const ROOT = __dirname;
 const W = 1100;
 const H = 750;

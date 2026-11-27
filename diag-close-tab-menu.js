@@ -14,6 +14,10 @@
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
 
+// 独立 userData：createTab/closeTab 会写 mb_tabs，不能覆盖真实会话。
+const os = require('node:os');
+app.setPath('userData', path.join(os.tmpdir(), 'minibrowser-diag-close-tab-' + process.pid));
+
 const ROOT = __dirname;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 

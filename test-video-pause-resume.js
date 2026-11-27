@@ -95,9 +95,11 @@ function durationOf(file) {
   });
 }
 
-/** 探测文件是否可被解析（返回 ffmpeg 的 stderr 摘要，用于断言 moov 缺失等）。 */
+/** 探测文件是否可被解析（返回 ffmpeg 的完整 stderr，用于断言 moov 缺失等）。 */
 function durationProbe(file) {
-  return run(['-i', file]).then((r) => (r.err || '').slice(0, 200));
+  // 旧版只取前 200 字符，而 "moov atom not found" 通常在其后，
+  // 让下面的断言恒真（看似通过，实际什么都没验证）。
+  return run(['-i', file]).then((r) => (r.err || ''));
 }
 
 /**
@@ -180,9 +182,11 @@ async function main() {
   const r1 = await runPartUntil(partHalf, 0, 20);
   ok('第 1 段确实被暂停打断（未跑到结尾）', r1.killed && r1.downloaded < srcDur - 1,
     'downloaded=' + r1.downloaded.toFixed(2));
+  // 断言此前写反了：测试名说「没有 moov」，条件却要求「不出现该错误」，
+  // 加上 stderr 被截断，等于从不验证这个「必须丢弃半成品」的关键前提。
   ok('被打断的半成品没有 moov（必须丢弃，不能当分段用）',
-    !/moov atom not found/.test('' + (await durationProbe(partHalf))),
-    await durationProbe(partHalf));
+    /moov atom not found/i.test('' + (await durationProbe(partHalf))),
+    (await durationProbe(partHalf)).slice(-200));
 
   const resumeAt = resumePointFrom(r1.downloaded);
   ok('续传起点已回退到断点之前', resumeAt < r1.downloaded && resumeAt > 0,
@@ -298,11 +302,26 @@ async function main() {
     'killedDur=' + killedDur.toFixed(2) + ' src=' + srcDur.toFixed(2));
 
   console.log('\n==== RESULT: ' + pass + ' passed, ' + fail + ' failed ====');
-  console.log('（工作目录保留以便排查：' + workDir + '）');
+  cleanupWorkDir();
   process.exit(fail === 0 ? 0 : 1);
+}
+
+// 每次运行都在 C:\ 根留下几十 MB 的测试视频与分段，多次运行会堆积。
+// 需要排查时设 MB_KEEP_TEST_DIR=1 保留。
+function cleanupWorkDir() {
+  if (process.env.MB_KEEP_TEST_DIR === '1') {
+    console.log('（按 MB_KEEP_TEST_DIR=1 保留工作目录：' + workDir + '）');
+    return;
+  }
+  try {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 main().catch((e) => {
   console.error('测试脚本异常：', e);
+  cleanupWorkDir();
   process.exit(1);
 });

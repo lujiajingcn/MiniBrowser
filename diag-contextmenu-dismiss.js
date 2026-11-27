@@ -13,14 +13,17 @@
  *  C. 点击菜单项本身 → 不在 mousedown 阶段误关（否则动作执行时菜单已消失）
  *  D. 菜单未打开时点击页面 → 不报错（幂等）
  *
- * B 路径无法用真实 webview 加载远程网页（离线且慢），改为
- * 在页面里嵌入一个 iframe 模拟 guest 的 sendToHost 行为不足以证明真实链路，
- * 故直接测「外壳收到 mb-page-pointer-down 后是否关闭」这条真实代码路径：
- * 通过 dispatchEvent 走真实的 ipc-message 分支逻辑。
+ * B 路径在 guest 页内派发真实 mousedown，由 webview-preload 捕获后
+ * sendToHost → renderer 的 ipc-message 分支 → hideContextMenu，
+ * 验证完整链路。旧版只做源码字符串包含检查，属于假阳性。
  */
 
 const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
+
+// 独立 userData：诊断前置状态需要干净，且不能污染真实 profile。
+const os = require('node:os');
+app.setPath('userData', path.join(os.tmpdir(), 'minibrowser-diag-contextmenu-' + process.pid));
 
 const ROOT = __dirname;
 const W = 1000;
@@ -105,22 +108,29 @@ app.whenReady().then(async () => {
   log.push(['B 收到通知前 hidden', hiddenBefore]);
   exp(hiddenBefore === false, 'B：前置条件，菜单此时应处于打开态');
 
-  // 检查 wireWebview 是否已注册该 channel 的处理分支。
-  // 注意：渲染进程在 contextIsolation 下没有 Node，不能在 executeJavaScript 里
-  // require('node:fs')（会抛 "Script failed to execute"），
-  // 故文件读取放在主进程侧做。
-  const fs = require('node:fs');
-  const src = fs.readFileSync(path.join(ROOT, 'renderer.js'), 'utf8');
-  const hasBranch = src.includes('mb-page-pointer-down');
-  const pre = fs.readFileSync(path.join(ROOT, 'webview-preload.js'), 'utf8');
-  const guestSends = pre.includes("sendToHost('mb-page-pointer-down'");
-  const guestHooked = pre.includes("doc.addEventListener('mousedown', onPagePointerDown, true)");
-  log.push(['B renderer 有该分支', hasBranch]);
-  log.push(['B guest 会 sendToHost', guestSends]);
-  log.push(['B guest 已挂mousedown', guestHooked]);
-  exp(hasBranch, 'B：renderer.js 应有 mb-page-pointer-down 分支');
-  exp(guestSends, 'B：webview-preload.js 应 sendToHost mb-page-pointer-down');
-  exp(guestHooked, 'B：webview-preload.js 应把 onPagePointerDown 挂到文档上');
+  // 旧版这里只做源码字符串包含检查：把 renderer.js 的处理分支删空、
+  // 或让 preload 不再转发，测试仍会报「全部通过」（假阳性）。
+  // 改为在 guest 页面内派发真实 mousedown，由 preload 捕获后 sendToHost，
+  // 最后断言菜单真的关闭 —— 验证的是完整产品链路。
+  const hasWebview = await wc.executeJavaScript("!!document.querySelector('webview')");
+  exp(hasWebview, 'B：应能找到 webview 元素');
+  if (hasWebview) {
+    const r = await wc.executeJavaScript(`
+      (() => {
+        const wv = document.querySelector('webview');
+        return wv.executeJavaScript(
+          "(function(){ var d=document.createEvent('MouseEvents');" +
+          "d.initMouseEvent('mousedown', true, true, window, 1, 100, 100, 200, 200," +
+          " false, false, false, false, 0, null);" +
+          "document.body.dispatchEvent(d); return 'dispatched'; })()"
+        );
+      })();
+    `);
+    log.push(['B guest 内派发 mousedown', JSON.stringify(r)]);
+    await wait(700);
+    log.push(['B 网页点击后 菜单还开着?', await menuOpen()]);
+    exp(!(await menuOpen()), 'B：点网页内容区应关闭右键菜单（经 mb-page-pointer-down 通道）');
+  }
 
   // ---- 场景 C：菜单项自身 mousedown 不应触发关闭 ----
   await wc.executeJavaScript(`

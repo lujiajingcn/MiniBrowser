@@ -82,7 +82,13 @@ ok('扁平结果均为书签叶节点', flat.every((b) => b.type === 'bookmark' 
 ok('过滤掉非 http(s) 链接', flat.every((b) => /^(https?:|ftps?:\/\/|\/\/)/i.test(b.url)));
 ok('含标题文本（非空）', flat.some((b) => b.title && b.title.length));
 const urls = new Set(flat.map((b) => b.url));
-ok('扁平书签数量与解析一致', urls.size === flat.length || flat.length >= urls.size);
+// 旧断言 `urls.size === flat.length || flat.length >= urls.size` 右支由 Set 定义保证恒真，
+// 永远通过。改为与树中书签总数对比，才能真正抓到漏收集/重复收集。
+function countBookmarks(node) {
+  return (node.children || []).reduce(
+    (n, c) => n + (c.type === 'bookmark' ? 1 : countBookmarks(c)), 0);
+}
+ok('扁平书签数量与树中书签数一致', flat.length === countBookmarks(root));
 // 树模型允许同一地址出现在不同文件夹（与 Chrome/Edge 一致），但「同一文件夹内」按 url 去重
 function intraFolderUnique(node) {
   const seen = new Set();
@@ -104,7 +110,7 @@ ok('生成 Netscape DOCTYPE', /<!DOCTYPE NETSCAPE-Bookmark-file-1>/.test(out));
 ok('生成 <DL> 列表', /<DL><p>/.test(out));
 ok('每个书签生成 <A HREF>', (out.match(/<DT><A HREF=/g) || []).length === flat.length);
 ok('文件夹生成 <DT><H3>', (out.match(/<DT><H3/g) || []).length === countFolders(root));
-ok('HTML 实体被正确转义', !/<A HREF="[^"]*&[^a-zA-Z#]/i.test(out) || true);
+ok('HTML 实体被正确转义', !/<A HREF="[^"]*&[^a-zA-Z#]/i.test(out));
 
 // 4) round-trip：生成的 HTML 再解析应保留文件夹与书签数量
 const reparsed = parseNetscapeBookmarks(out);

@@ -25,6 +25,15 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 
+// 独立 userData / 端口：脚本会 spawn 自愈进程，不能占用真实实例的
+// 单实例锁与 show-server 端口。
+const os = require('node:os');
+const DIAG_UD = path.join(os.tmpdir(), 'minibrowser-diag-startup-' + process.pid);
+app.setPath('userData', DIAG_UD);
+// 子进程（以及它自愈拉起的 Electron）继承这个环境变量，才不会锁真实 profile。
+process.env.MB_USER_DATA_DIR = DIAG_UD;
+process.env.MB_SHOW_PORT = String(39400 + (process.pid % 100));
+
 const ROOT = __dirname;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const fails = [];
@@ -91,10 +100,11 @@ function checkSelfHeal() {
 async function checkLaunchUnderPollutedEnv() {
   const net = require('node:net');
   const electronBin = require(path.join(ROOT, 'node_modules', 'electron'));
+  const PORT = Number(process.env.MB_SHOW_PORT);
 
   // 先确保端口是空的（否则旧实例会干扰判断）
   await new Promise((resolve) => {
-    const probe = net.connect(39321, '127.0.0.1');
+    const probe = net.connect(PORT, '127.0.0.1');
     probe.on('connect', () => { probe.destroy(); resolve(); });
     probe.on('error', () => resolve());
   });
@@ -113,7 +123,7 @@ async function checkLaunchUnderPollutedEnv() {
   for (let i = 0; i < 24 && !listening; i++) {
     await wait(500);
     listening = await new Promise((resolve) => {
-      const s = net.connect(39321, '127.0.0.1');
+      const s = net.connect(PORT, '127.0.0.1');
       s.on('connect', () => { s.destroy(); resolve(true); });
       s.on('error', () => resolve(false));
     });
@@ -125,7 +135,20 @@ async function checkLaunchUnderPollutedEnv() {
   exp(out.indexOf("reading 'on'") < 0,
     '不应出现 ipcMain 为 undefined 的报错（模块顶层调用 ipcMain）');
 
-  try { child.kill(); } catch (_) { /* ignore */ }
+  // child 只是纯 Node 模式的启动器；main.js 自愈时会再 spawn 一个
+  // detached 的真正 Electron 进程。只 kill child 会遗留一个持有临时 profile
+  // 和端口的后台实例，必须连同子进程树一起结束。
+  try {
+    if (process.platform === 'win32') {
+      require('node:child_process').execFileSync('taskkill',
+        ['/F', '/T', '/PID', String(child.pid)],
+        { stdio: 'ignore', windowsHide: true });
+    } else {
+      process.kill(child.pid, 'SIGTERM');
+    }
+  } catch (_) {
+    try { child.kill(); } catch (_) { /* ignore */ }
+  }
   await wait(1000);
 }
 
